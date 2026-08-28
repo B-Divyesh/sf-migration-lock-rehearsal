@@ -15,6 +15,8 @@
 
 Buttons shift into their hard shadow on press. The terminal cursor has one restrained blink; reduced-motion users get a static cursor and no transitions. Sections use ruled divider lines instead of soft cards.
 
+On narrow screens, navigation wraps within the header. The hero art loses its slight rotation so text enlargement cannot push the instrument beyond the viewport.
+
 The paid checklist uses the same hard-rule instrument language. It appears only after license verification and uses a blue offset shadow to separate purchased reference content from safety-critical free output.
 
 ## Asset plan and provenance

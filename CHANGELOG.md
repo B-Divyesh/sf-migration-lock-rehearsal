@@ -7,6 +7,8 @@
 - Serialize JSON safely for every valid filename and write recovery guidance for failed runs.
 - Add the Sociobot one-time license flow and operator review checklist.
 - Fix section navigation, route metadata, and demo live-region semantics.
+- Reflow mobile navigation at 200% text and show local/offline, privacy, and optional-price facts on the first screen.
+- Verify the registered live checkout redirects to Dodo before release.
 
 ## 0.1.0 — 2026-08-28
 

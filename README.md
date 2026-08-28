@@ -8,7 +8,7 @@ The static documentation site lives at `https://migration-lock-rehearsal.sociobo
 
 ## Quick demo
 
-The bundled dry-run demo gives a usable sample card:
+The bundled dry-run demo works locally without Docker or network access. It gives a usable sample card:
 
 ```sh
 cargo run -- demo --dry-run --output ./mlr-demo

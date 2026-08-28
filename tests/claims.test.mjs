@@ -95,11 +95,20 @@ exit 0
   }
 }
 
-test('@claim:demo-report bundled demo writes a go/no-go runbook', () => {
+test('@claim:demo-report bundled offline dry-run writes a go/no-go runbook', () => {
   const parent = mkdtempSync(join(tmpdir(), 'mlr-claim-'))
   const out = join(parent, 'mlr-demo')
   try {
-    const result = runCli(['demo', '--dry-run', '--output', out])
+    const result = runCli(['demo', '--dry-run', '--output', out], {
+      env: {
+        ...process.env,
+        PATH: join(parent, 'no-network-or-docker-tools'),
+        HTTP_PROXY: 'http://127.0.0.1:1',
+        HTTPS_PROXY: 'http://127.0.0.1:1',
+        ALL_PROXY: 'http://127.0.0.1:1',
+        NO_PROXY: '',
+      },
+    })
     assertSuccess(result)
     assert.ok(existsSync(join(out, 'report.json')))
     const runbook = readFileSync(join(out, 'runbook.md'), 'utf8')
@@ -262,7 +271,49 @@ test('route metadata, section links, and ARIA remain valid at desktop and mobile
   })
 })
 
-test('@claim:paid-license returned and restored Sociobot licenses verify, cache, reveal, and remove the paid checklist', async () => {
+test('390px navigation reflows at 200% text and first-screen facts name local, offline, privacy, and price', async () => {
+  await withSite(async origin => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+      const page = await context.newPage()
+      for (const path of ['/', '/demo', '/privacy', '/terms']) {
+        await page.goto(origin + path, { waitUntil: 'networkidle' })
+        await page.addStyleTag({ content: ':root { font-size: 200% !important; }' })
+        const geometry = await page.evaluate(() => ({
+          clientWidth: document.documentElement.clientWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+          links: [...document.querySelectorAll('header nav a')].map(link => {
+            const rect = link.getBoundingClientRect()
+            return { label: link.textContent?.trim(), left: rect.left, right: rect.right }
+          }),
+        }))
+        assert.equal(geometry.scrollWidth, geometry.clientWidth, `${path} is ${geometry.scrollWidth}px wide at 200% text in a ${geometry.clientWidth}px viewport`)
+        for (const link of geometry.links) {
+          assert.ok(link.left >= 0 && link.right <= geometry.clientWidth, `${path} ${link.label} is outside the viewport: ${JSON.stringify(link)}`)
+        }
+      }
+
+      await page.goto(origin + '/')
+      assert.deepEqual(await page.locator('.facts li').allTextContents(), [
+        'Local dry-run works offline',
+        'No tracking',
+        '$29 once; checklist optional',
+      ])
+      await context.close()
+    } finally { await browser.close() }
+  })
+})
+
+test('@claim:paid-license live checkout redirects and returned or restored licenses verify, cache, reveal, and remove the paid checklist', async () => {
+  const checkoutUrl = 'https://api.sociobot.in/api/v1/products/migration-lock-rehearsal/checkout'
+  const checkoutResponse = await fetch(checkoutUrl, { redirect: 'manual', signal: AbortSignal.timeout(15_000) })
+  assert.equal(checkoutResponse.status, 303)
+  const checkoutLocation = new URL(checkoutResponse.headers.get('location'))
+  assert.equal(checkoutLocation.protocol, 'https:')
+  assert.equal(checkoutLocation.hostname, 'checkout.dodopayments.com')
+  assert.match(checkoutLocation.pathname, /^\/session\/cks_/)
+
   await withSite(async origin => {
     const browser = await chromium.launch({ headless: true })
     try {
@@ -283,7 +334,7 @@ test('@claim:paid-license returned and restored Sociobot licenses verify, cache,
       await page.reload()
       await page.getByText('License active.', { exact: true }).waitFor()
       assert.equal(verifyRequests, 1, 'a fresh cached verdict should not verify twice in one day')
-      assert.equal(await page.getByRole('link', { name: 'Buy operator license — $29' }).getAttribute('href'), 'https://api.sociobot.in/api/v1/products/migration-lock-rehearsal/checkout')
+      assert.equal(await page.getByRole('link', { name: 'Buy operator license — $29' }).getAttribute('href'), checkoutUrl)
 
       await page.getByRole('button', { name: 'Remove saved license' }).click()
       assert.deepEqual(await page.evaluate(() => ({ license: localStorage.getItem('sb_license:migration-lock-rehearsal'), cache: localStorage.getItem('sb_license:migration-lock-rehearsal:verification') })), { license: null, cache: null })

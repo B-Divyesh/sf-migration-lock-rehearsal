@@ -6,9 +6,9 @@
 | For database maintainers who need lock, rewrite, and rollback estimates before a release. | 13 | — |
 | Try it with sample data | 5 | — |
 | See the bundled go/no-go card. | 6 | — |
-| Fresh Docker container | 3 | — |
-| Bundled invented sample | 3 | — |
+| Local dry-run works offline | 4 | — |
 | No tracking | 2 | — |
+| $29 once; checklist optional | 4 | — |
 | Measure the risk before the window opens. | 7 | — |
 | Run a migration rehearsal | 4 | — |
 | Bring a fixture. | 3 | — |

@@ -1,10 +1,10 @@
 [
   {
     "id": "demo-report",
-    "claim": "The bundled dry-run demo writes a go/no-go JSON report and runbook.",
-    "where": "landing demo terminal, README",
+    "claim": "The bundled dry-run works locally without Docker or network access and writes a go/no-go JSON report and runbook.",
+    "where": "landing first-screen facts and demo terminal, README",
     "test": "npm test -- --test-name-pattern @claim:demo-report",
-    "sandbox": "fresh temporary directory; run the release CLI demo; assert report.json and runbook.md contain GO and rollback status"
+    "sandbox": "fresh temporary directory; run the release CLI demo with no executable PATH and all network proxies pointed at a closed loopback port; assert report.json and runbook.md contain GO and rollback status"
   },
   {
     "id": "local-only",
@@ -92,9 +92,9 @@
   },
   {
     "id": "paid-license",
-    "claim": "A returned or pasted Sociobot license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
+    "claim": "Sociobot checkout redirects to hosted Dodo checkout; a returned or pasted license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
     "where": "landing paid tier, privacy, terms",
     "test": "npm test -- --test-name-pattern @claim:paid-license",
-    "sandbox": "fresh browser context with a recorded Sociobot verification response; assert URL token stripping, namespaced storage, daily cache, paid checklist, restore, checkout target, and removal"
+    "sandbox": "one live Sociobot checkout request with redirect following disabled plus a fresh browser context with a recorded verification response; assert HTTP 303 to checkout.dodopayments.com, URL token stripping, namespaced storage, daily cache, paid checklist, restore, and removal"
   }
 ]

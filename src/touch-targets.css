@@ -18,5 +18,18 @@ footer a {
 }
 
 @media (max-width: 650px) {
-  .site-header nav { gap: 8px; }
+  .site-header {
+    flex-wrap: wrap;
+  }
+
+  .site-header nav {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-left: auto;
+    max-width: 100%;
+  }
+
+  .hero figure {
+    transform: none;
+  }
 }
