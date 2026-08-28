@@ -2,7 +2,7 @@
 
 ## Release status
 
-**READY FOR DEPLOYMENT.** Every release blocker in
+**DEPLOYED AND READY FOR INDEPENDENT VERIFICATION.** Every release blocker in
 `.factory/verification-2.md` for candidate
 `f86ac9ff0cad67b08b61a3b98e59f8e9eb4d9352` has a root-cause fix and an
 observable regression test. The artifact remains a Rust CLI with a Vite static
@@ -71,6 +71,28 @@ Run on 2026-08-28 UTC from `/work/repo`:
 - Offline/update — not applicable: this documentation site makes no offline or
   PWA claim and intentionally registers no service worker. The CLI dry-run has
   no network requirement.
+
+## Commit, deployment, and live identity
+
+- Repair commit `f05d40c0837a8314d25a50e85981d6d635e68174` was pushed to
+  `origin/main`.
+- `dist/site/` was deployed to the production environment of Azure Static Web
+  App `sf-migration-lock-rehearsal` in resource group `sociobot`.
+- `npm run verify:url -- https://migration-lock-rehearsal.sociobot.in` — PASS
+  at 1440px and 390px with zero serious/critical axe findings or console errors.
+- Live `/`, `/demo`, `/privacy`, and `/terms` return 200. A random unknown route
+  returns the styled HTML page with HTTP 404.
+- Live JavaScript `assets/index-Cv8VkA3S.js` is 7,055 bytes and SHA-256
+  `12e768b07602f031108564b8f6c65874a88abfb6cc5fe8a4ba41e59f6252aad9`.
+  Live CSS `assets/index-B4BEPYFK.css` is 5,457 bytes and SHA-256
+  `98f92352310865214ba5fe58d2015b788a9e6583074e047b70d26c39039286a5`.
+  Both hashes exactly match the local production build.
+- Live hashed assets return `public, max-age=31536000, immutable`. HTML uses a
+  30-second revalidation policy. CSP, `nosniff`, and strict-origin referrer
+  headers match the checked-in policy.
+- A fresh live 390px browser flow crawled all eight links, used the skip link,
+  entered the demo, and confirmed four same-origin requests, empty browser
+  storage/cookies, no service-worker controller or registration, and no errors.
 
 ## Docker coverage and remaining limitation
 
