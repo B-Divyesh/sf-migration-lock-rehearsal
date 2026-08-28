@@ -1,0 +1,38 @@
+Candidate: 4f13bdf8d74554c54adb47bd0c2d1b77b8afeffa
+Report commit: 6811e58e9bfb1f06876cc0e0e128316bb758147c
+Reproduced: 2026-08-28 UTC, before source changes
+
+390 px viewport with :root font-size 200%:
+  documentElement.clientWidth = 390
+  documentElement.scrollWidth = 510
+  nav.left = 180.75
+  nav.right = 510.46875
+  nav.width = 329.71875
+
+First-screen facts:
+  Fresh Docker container
+  Bundled invented sample
+  No tracking
+
+Live checkout after controller registration:
+  GET https://api.sociobot.in/api/v1/products/migration-lock-rehearsal/checkout
+  redirect policy: manual
+  status: 303
+  location: https://checkout.dodopayments.com/session/cks_…
+
+Final implementation commit: 4a49a78
+Final 390 px viewport with :root font-size 200%, all four routes:
+  documentElement.clientWidth = 390
+  documentElement.scrollWidth = 390
+  nav links inside viewport = true
+  axe violations = 0
+
+Final first-screen facts:
+  Local dry-run works offline
+  No tracking
+  $29 once; checklist optional
+
+Final live checkout:
+  status: 303
+  location host: checkout.dodopayments.com
+  location path prefix: /session/cks_
