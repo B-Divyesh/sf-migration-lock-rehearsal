@@ -1,63 +1,105 @@
-# Handoff — Migration Lock Rehearsal v0.1.0
+# Handoff — Migration Lock Rehearsal v0.1.0 repair
 
-## Independent verification status — **FAIL**
+## Release status — **PASS**
 
-Candidate `9de38a35115afeedc61a59e98443f496e9c6f6e6` was independently verified
-against https://migration-lock-rehearsal.sociobot.in on 2026-08-28 UTC.
-The live assets exactly match this candidate, but it is **not releaseable**.
+Repair commits:
 
-- **P0:** A rollback failure writes a `GO` verdict and exits 0. This is unsafe
-  for a go/no-go migration tool.
-- **P1:** The advertised live Sociobot checkout is HTTP 404.
-- **P1:** `mlr demo --engine mysql --dry-run` manufactures a MySQL-labelled
-  report despite MySQL being unsupported.
-- **P1:** Documented `mlr demo --reset` is unimplemented.
-- **P1:** The live styled unknown-route page is delivered as HTTP 200, not
+- `ca7c51e1563402c26d90899815df8d1cb4caebe9` — safety, demo, QA, and accessibility repairs.
+- `29030224d5c696924fa08d3bedebf62dc903467e` — immutable caching for versioned assets.
+
+Both commits are pushed to `main`. The static artifact was deployed on
+2026-08-28 UTC to https://migration-lock-rehearsal.sociobot.in using
+`/opt/fleet/lib/deploy-static.sh migration-lock-rehearsal dist/site`
+(Azure deployment ID `2a98df1f-129f-4155-8705-88e51676568d`).
+
+## Repairs
+
+- Rollback failure now writes `NO-GO` in both `report.json` and `runbook.md`,
+  then exits non-zero with an actionable error. Regression tests cover both
+  Postgres and ClickHouse report paths.
+- The CLI validates the engine before every demo/dry-run report. Only
+  `postgres` and `clickhouse` are accepted; `mysql` is rejected.
+- Implemented `mlr demo --output DIR --reset`. It requires an explicit output
+  directory and refuses the default folder and working-directory targets.
+- Removed the unprovisioned $29 license offer, checkout link, token storage,
+  and verification fetch. The official endpoint returned HTTP 404 and this
+  repository is not authorized to register billing products. The free CLI’s
+  reports, exports, and safety behavior remain available with no account.
+- Replaced the broad SPA fallback with explicit application routes and a 404
+  response override. A real unknown live path now serves the styled page with
   HTTP 404.
-- **P1:** Header/footer mobile link targets are below the required 44 px.
+- Header, footer, and wordmark links have tested 44px minimum touch targets at
+  390px. Versioned assets now return `Cache-Control: public, max-age=31536000,
+  immutable`.
+- Added `npm run typecheck` and `npm run lint`; upgraded claim tests from a
+  checkout source-string check to observable CLI/browser tests.
 
-See `.factory/verification.md` for commands, observable evidence, passing
-checks, rate-limit result (30 requests allowed; request 31 was 429 with
-`Retry-After: 4`), and non-blocking follow-ups. Real Docker-backed database
-execution could not be run in this verifier container because Docker is not
-installed; all other listed checks were run.
+## Verification evidence
 
-## What shipped
-
-- A Rust `mlr` CLI for Docker-isolated Postgres and ClickHouse rehearsals.
-- `mlr demo` runs bundled sanitized fixtures. `--dry-run` produces an immediate sample go/no-go card without Docker.
-- Postgres runs the supplied workload alongside migration SQL, samples `pg_stat_activity` lock waits, records statement time and table bytes, and validates optional rollback SQL.
-- ClickHouse runs its fixture, workload, migration, optional rollback, and records statement time and active-part byte movement. Its report labels merge timing as an estimate.
-- The CLI refuses remote-looking targets through `mlr guard`; rehearsals create their own disposable Docker containers and remove them after a run.
-- A Vite static documentation site in `dist/site/`, with `/demo`, `/privacy`, `/terms`, and a styled `/404` state.
-- One-click terminal demo, bundled fixtures, a $29 Sociobot one-time license checkout/restore/verify flow, and no analytics or third-party runtime fonts/scripts.
-
-## Verification
-
-Run from a clean checkout:
+From a clean dependency install (`npm ci`, 0 vulnerabilities):
 
 ```sh
-npm install
+npm run typecheck
+npm run lint
 npm test
-npm run build:site
+npm run build
 cargo build --release
-cargo package
+cargo package --allow-dirty
 ```
 
-Completed in this work order:
+All passed. `npm test` runs 5 Rust tests and 7 Node/Playwright claim tests.
+The claim suite covers demo reports, local-only guard, actual local-only page
+requests, supported engines, demo reset, invented fixture records, selected
+output folder, and mobile touch targets. Production build output is:
 
-- `npm test` passed: 2 Rust tests and 4 claim tests.
-- `npm run build:site` passed; deploy root is `dist/site/index.html`.
-- `cargo build --release` and `cargo package --allow-dirty` passed. The publishable crate is 51.4 KB compressed.
-- `mlr demo --dry-run` wrote both `report.json` and `runbook.md`.
-- `mlr demo --engine clickhouse --dry-run` wrote a ClickHouse-labelled report.
-- Local site verifier: 547 ms load, no console errors, title/lang/main present, one h1, no missing image alt text, and no unlabeled buttons.
-- Axe Playwright scan: zero serious or critical issues. Checked `/`, `/demo`, `/privacy`, and `/terms` at a 390px viewport; every route had one h1 and one main landmark.
-- Production static assets: 3.68 KB gzip JS, 1.99 KB gzip CSS, 107.87 KB WebP hero. This is below the static budgets.
+- JavaScript: 7.08 kB / 3.04 kB gzip.
+- CSS: 5.46 kB / 1.96 kB gzip.
+- Original hero WebP: 107.87 kB.
 
-## Notes and next steps
+`cargo install --path . --root <fresh-temp-root>` passed. The installed binary
+passed `--help`, `--version`, Postgres and ClickHouse dry-run cards, safe reset,
+remote guard refusal, and unsupported-MySQL refusal. `cargo package` also
+compiled the packaged crate successfully.
 
-- Results are deliberately estimates. Use a production-shaped, sanitized fixture before a deployment. ClickHouse merges may outlive the statement timing.
-- The one-time license uses the mandated Sociobot endpoint and has no registered product configuration in this repository; factory registration supplies that later.
-- The environment has Playwright Chromium but no system Chrome. The standard Lighthouse CLI could not attach to that browser, so this handoff records the equivalent static-size, local-load, verifier, and Axe results rather than a Lighthouse score.
-- The stack is Rust rather than Go because this worker image does not include a Go toolchain. This is within the assigned Rust-or-Go stack decision.
+Local and live Playwright checks passed at 1440px and 390px for `/`, `/demo`,
+`/privacy`, and `/terms`: one h1 and one main, no horizontal overflow, no
+console errors, keyboard skip-link activation, same-origin requests only, and
+zero axe serious/critical violations. `@axe-core/playwright` was used for the
+accessibility scan. The site has no offline/PWA claim or service worker; the
+CLI and bundled dry-run demo remain usable without any web service.
+
+Live response checks:
+
+- `/` returns HTTP 200.
+- `/does-not-exist` returns HTTP 404 and the styled 404 page.
+- CSP restricts `connect-src` to `'self'`; no checkout/API endpoint remains.
+- `Referrer-Policy: strict-origin-when-cross-origin` and
+  `X-Content-Type-Options: nosniff` are present.
+- Downloaded live `assets/index-CF8j4ngq.js` SHA-256 exactly matched the local
+  built asset: `04d338a7ceec36208ec86948ac4f20cafc15cb0ec5dc8d5fc795464daa8d0a87`.
+- The same hashed JS received immutable cache control.
+
+## Run and deploy
+
+```sh
+npm ci
+npm test
+npm run typecheck
+npm run lint
+npm run build
+cargo run -- demo --dry-run --output ./mlr-demo
+cat ./mlr-demo/runbook.md
+```
+
+Deploy only the static artifact with:
+
+```sh
+/opt/fleet/lib/deploy-static.sh migration-lock-rehearsal dist/site
+```
+
+## Known gap
+
+The worker image has no Docker daemon/binary, so real container execution was
+not run here. The shipped CLI still requires Docker for non-dry-run rehearsals;
+its deterministic report, rollback-failure, engine-validation, reset, and
+consumer-install paths are covered locally.
