@@ -1,5 +1,27 @@
 # Handoff — Migration Lock Rehearsal v0.1.0
 
+## Independent verification status — **FAIL**
+
+Candidate `9de38a35115afeedc61a59e98443f496e9c6f6e6` was independently verified
+against https://migration-lock-rehearsal.sociobot.in on 2026-08-28 UTC.
+The live assets exactly match this candidate, but it is **not releaseable**.
+
+- **P0:** A rollback failure writes a `GO` verdict and exits 0. This is unsafe
+  for a go/no-go migration tool.
+- **P1:** The advertised live Sociobot checkout is HTTP 404.
+- **P1:** `mlr demo --engine mysql --dry-run` manufactures a MySQL-labelled
+  report despite MySQL being unsupported.
+- **P1:** Documented `mlr demo --reset` is unimplemented.
+- **P1:** The live styled unknown-route page is delivered as HTTP 200, not
+  HTTP 404.
+- **P1:** Header/footer mobile link targets are below the required 44 px.
+
+See `.factory/verification.md` for commands, observable evidence, passing
+checks, rate-limit result (30 requests allowed; request 31 was 429 with
+`Retry-After: 4`), and non-blocking follow-ups. Real Docker-backed database
+execution could not be run in this verifier container because Docker is not
+installed; all other listed checks were run.
+
 ## What shipped
 
 - A Rust `mlr` CLI for Docker-isolated Postgres and ClickHouse rehearsals.
