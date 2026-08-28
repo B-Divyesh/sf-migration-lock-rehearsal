@@ -2,7 +2,7 @@
 
 Rehearse a database migration before production.
 
-Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a concrete go/no-go card before a schema change. It starts a fresh Docker database, loads the fixture you provide, runs the migration under an optional workload, checks rollback SQL, and writes a measured report. A failed rollback is always **NO-GO**. Its URL guard accepts exact loopback hosts only.
+Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a concrete go/no-go card before a schema change. It starts a fresh Docker database, loads the fixture you provide, runs the migration under an optional workload, checks rollback SQL, and writes a measured report. Failed commands, failed rollback, and exceeded limits are always **NO-GO**. Its URL guard accepts exact loopback hosts only.
 
 The static documentation site lives at `https://migration-lock-rehearsal.sociobot.in`.
 
@@ -37,16 +37,18 @@ cargo run -- rehearse \
 ```
 
 Read `./rehearsal-card/report.json` in automation and `./rehearsal-card/runbook.md` during the change review.
-Without a rollback file, or when that file fails, the card is **NO-GO** and the CLI exits non-zero after writing both files.
+When a workload, measurement, migration, or rollback command fails, the card is **NO-GO**. The CLI writes both files with the failed stage and recovery step, then exits non-zero. Missing measurements are `null`, never zero.
 
-Use `--engine clickhouse` with a ClickHouse fixture and migration. Both engines run the workload while the migration executes and record statement time, observed lock waits, table bytes, and rollback status. Results are estimates from a new container. Use a production-shaped sanitized fixture before relying on them. The rehearsal command has no database URL option.
+Use `--engine clickhouse` with a ClickHouse fixture and migration. Both engines run the workload while the migration executes and record statement time, observed lock waits, table bytes, table growth, and rollback status. Results are estimates from a new container. Use a production-shaped sanitized fixture before relying on them. The rehearsal command has no database URL option.
+
+The default release limits are 30,000 ms statement time, 1,000 ms lock wait, and 104,857,600 bytes table growth. Override them with `--max-statement-ms`, `--max-lock-wait-ms`, and `--max-table-growth-bytes`. Every configured limit appears in the JSON report and runbook. An exceeded limit writes **NO-GO** and exits non-zero.
 
 ## Commands
 
 ```text
-mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json]
+mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json] [LIMITS]
 mlr demo --output DIR --reset
-mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json]
+mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json] [LIMITS]
 mlr guard DATABASE_URL
 ```
 
@@ -69,7 +71,13 @@ The exact static deploy command is `npm run build:site`; it places `index.html` 
 
 ## Privacy
 
-The site makes only same-origin requests and stores no visitor data. The CLI writes reports to your chosen output folder and runs SQL in its new Docker container. See the site’s `/privacy` and `/terms` pages.
+Without a license action, the site makes only same-origin requests and stores no visitor data. The CLI writes reports to your chosen output folder and runs SQL in its new Docker container. See the site’s `/privacy` and `/terms` pages.
+
+## Operator license
+
+The optional operator license costs $29 once. It adds the browser-based operator review checklist. CLI reports and safety checks stay free.
+
+Purchase uses Sociobot’s hosted checkout. A returned or pasted token is stored under `sb_license:migration-lock-rehearsal`, sent only to `api.sociobot.in`, and verified at most once daily. Use **Remove saved license** to delete it. Sociobot and Dodo are the merchant of record, and refunds are handled there.
 
 ## License
 

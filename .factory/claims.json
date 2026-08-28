@@ -15,7 +15,7 @@
   },
   {
     "id": "site-private",
-    "claim": "The documentation site makes only same-origin requests and stores no visitor data.",
+    "claim": "Without a license action, the documentation site makes only same-origin requests and stores no visitor data.",
     "where": "landing facts, privacy page, README",
     "test": "npm test -- --test-name-pattern @claim:site-private",
     "sandbox": "fresh desktop and 390px browser contexts; inspect every request, local/session storage and cookies across all routes"
@@ -68,5 +68,33 @@
     "where": "README, CLI help",
     "test": "npm test -- --test-name-pattern @claim:rollback-no-go",
     "sandbox": "deterministic Docker command double omits and fails rollback for each engine; assert exit status, JSON verdict and runbook verdict"
+  },
+  {
+    "id": "failed-command-no-go",
+    "claim": "A failed workload, measurement, or migration command writes a NO-GO report and runbook and exits non-zero.",
+    "where": "landing limits section, README, CLI help",
+    "test": "npm test -- --test-name-pattern @claim:failed-command-no-go",
+    "sandbox": "deterministic Docker command double fails each stage for both engines, including a workload that fails after migration; assert non-zero exit, NO-GO JSON stdout/file, failure stage, null missing measurement, and recovery runbook"
+  },
+  {
+    "id": "threshold-verdict",
+    "claim": "Statement time, lock wait, and table growth limits determine the verdict.",
+    "where": "landing demo card, README, CLI help",
+    "test": "npm test -- --test-name-pattern @claim:threshold-verdict",
+    "sandbox": "deterministic Docker measurements for both engines; set each limit below its measurement and assert non-zero NO-GO plus the configured limits in JSON and runbook"
+  },
+  {
+    "id": "safe-json",
+    "claim": "JSON output stays valid when a migration filename contains control characters.",
+    "where": "README JSON automation guidance",
+    "test": "npm test -- --test-name-pattern @claim:safe-json",
+    "sandbox": "fresh temporary directory and valid Unix filename containing a newline; parse report.json and --json stdout and assert the original filename"
+  },
+  {
+    "id": "paid-license",
+    "claim": "A returned or pasted Sociobot license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
+    "where": "landing paid tier, privacy, terms",
+    "test": "npm test -- --test-name-pattern @claim:paid-license",
+    "sandbox": "fresh browser context with a recorded Sociobot verification response; assert URL token stripping, namespaced storage, daily cache, paid checklist, restore, checkout target, and removal"
   }
 ]

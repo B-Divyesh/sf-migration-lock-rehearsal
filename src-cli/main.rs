@@ -6,7 +6,12 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use serde::Serialize;
+
 const VERSION: &str = "0.1.0";
+const DEFAULT_MAX_STATEMENT_MS: u128 = 30_000;
+const DEFAULT_MAX_LOCK_WAIT_MS: u128 = 1_000;
+const DEFAULT_MAX_TABLE_GROWTH_BYTES: u64 = 104_857_600;
 const DEMO_MARKER: &str = ".mlr-demo";
 const DEMO_MARKER_CONTENT: &str = "migration-lock-rehearsal demo directory\n";
 const POSTGRES_FIXTURE: &str = include_str!("../examples/postgres/fixture.sql");
@@ -17,7 +22,6 @@ const CLICKHOUSE_FIXTURE: &str = include_str!("../examples/clickhouse/fixture.sq
 const CLICKHOUSE_MIGRATION: &str = include_str!("../examples/clickhouse/add_customer_flag.sql");
 const CLICKHOUSE_ROLLBACK: &str = include_str!("../examples/clickhouse/rollback_customer_flag.sql");
 const CLICKHOUSE_WORKLOAD: &str = include_str!("../examples/clickhouse/read_workload.sql");
-#[derive(Default)]
 struct Opt {
     engine: String,
     fixture: String,
@@ -30,6 +34,30 @@ struct Opt {
     reset: bool,
     output_specified: bool,
     migration_label: String,
+    max_statement_ms: u128,
+    max_lock_wait_ms: u128,
+    max_table_growth_bytes: u64,
+}
+
+impl Default for Opt {
+    fn default() -> Self {
+        Self {
+            engine: String::new(),
+            fixture: String::new(),
+            migration: String::new(),
+            rollback: String::new(),
+            workload: String::new(),
+            output: String::new(),
+            dry: false,
+            json: false,
+            reset: false,
+            output_specified: false,
+            migration_label: String::new(),
+            max_statement_ms: DEFAULT_MAX_STATEMENT_MS,
+            max_lock_wait_ms: DEFAULT_MAX_LOCK_WAIT_MS,
+            max_table_growth_bytes: DEFAULT_MAX_TABLE_GROWTH_BYTES,
+        }
+    }
 }
 fn main() -> ExitCode {
     match run() {
@@ -206,6 +234,18 @@ fn parse(a: &[String], demo: bool) -> Result<Opt, String> {
                 o.output_specified = true;
                 i += 1
             }
+            "--max-statement-ms" => {
+                o.max_statement_ms = parse_limit(&get(i)?, "--max-statement-ms")?;
+                i += 1
+            }
+            "--max-lock-wait-ms" => {
+                o.max_lock_wait_ms = parse_limit(&get(i)?, "--max-lock-wait-ms")?;
+                i += 1
+            }
+            "--max-table-growth-bytes" => {
+                o.max_table_growth_bytes = parse_limit(&get(i)?, "--max-table-growth-bytes")?;
+                i += 1
+            }
             "--dry-run" => o.dry = true,
             "--json" => o.json = true,
             "--reset" if demo => o.reset = true,
@@ -215,6 +255,15 @@ fn parse(a: &[String], demo: bool) -> Result<Opt, String> {
         i += 1
     }
     Ok(o)
+}
+
+fn parse_limit<T>(value: &str, option: &str) -> Result<T, String>
+where
+    T: std::str::FromStr,
+{
+    value
+        .parse()
+        .map_err(|_| format!("{option} needs a non-negative whole number"))
 }
 fn validate_engine(engine: &str) -> Result<(), String> {
     match engine {
@@ -473,10 +522,43 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     if !o.workload.is_empty() && Path::new(&o.workload).is_file() {
         docker(&["cp", &o.workload, &format!("{name}:/work/workload.sql")])?
     }
-    psql(&name, &["-f", "/work/fixture.sql"])?;
-    let before = table_bytes(&name);
+    psql(&name, &["-v", "ON_ERROR_STOP=1", "-f", "/work/fixture.sql"])?;
+    let mut measurements = Measurements::default();
+    let before = match table_bytes(&name) {
+        Ok(value) => value,
+        Err(error) => {
+            return write_failure_report(o, "postgres", "measurement", &error, measurements)
+        }
+    };
+    measurements.table_bytes_before = Some(before);
     let mut workload = if !o.workload.is_empty() {
-        Some(Command::new("docker").args(["exec", &name, "sh", "-lc", "for i in $(seq 1 120); do psql -U postgres -d rehearsal -f /work/workload.sql >/dev/null; done"]).spawn().map_err(|e| format!("start Postgres workload: {e}"))?)
+        match Command::new("docker")
+            .args([
+                "exec",
+                &name,
+                "psql",
+                "-U",
+                "postgres",
+                "-d",
+                "rehearsal",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-f",
+                "/work/workload.sql",
+            ])
+            .spawn()
+        {
+            Ok(child) => Some(child),
+            Err(error) => {
+                return write_failure_report(
+                    o,
+                    "postgres",
+                    "workload",
+                    &format!("could not start supplied workload: {error}"),
+                    measurements,
+                )
+            }
+        }
     } else {
         None
     };
@@ -499,45 +581,101 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     {
         Ok(child) => child,
         Err(error) => {
-            stop_child(&mut workload);
-            return Err(error.to_string());
+            cancel_child(&mut workload);
+            return write_failure_report(
+                o,
+                "postgres",
+                "migration",
+                &format!("could not start migration: {error}"),
+                measurements,
+            );
         }
     };
     let mut observed_wait = 0;
     loop {
-        match migration.try_wait().map_err(|e| e.to_string())? {
-            Some(status) if status.success() => break,
-            Some(_) => {
-                stop_child(&mut workload);
-                return Err("migration failed; the disposable database was removed".into());
+        if let Err(error) = check_workload(&mut workload, "Postgres") {
+            let _ = migration.kill();
+            let _ = migration.wait();
+            measurements.duration_ms = Some(start.elapsed().as_millis());
+            measurements.max_lock_wait_ms = Some(observed_wait);
+            return write_failure_report(o, "postgres", "workload", &error, measurements);
+        }
+        match migration.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => {
+                cancel_child(&mut workload);
+                measurements.duration_ms = Some(start.elapsed().as_millis());
+                measurements.max_lock_wait_ms = Some(observed_wait);
+                return write_failure_report(
+                    o,
+                    "postgres",
+                    "migration",
+                    "migration command failed",
+                    measurements,
+                );
             }
-            None => {
-                observed_wait = observed_wait.max(pg_lock_wait_ms(&name));
+            Ok(None) => {
+                observed_wait = match pg_lock_wait_ms(&name) {
+                    Ok(wait) => observed_wait.max(wait),
+                    Err(error) => {
+                        let _ = migration.kill();
+                        let _ = migration.wait();
+                        cancel_child(&mut workload);
+                        measurements.duration_ms = Some(start.elapsed().as_millis());
+                        return write_failure_report(
+                            o,
+                            "postgres",
+                            "measurement",
+                            &error,
+                            measurements,
+                        );
+                    }
+                };
                 std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                cancel_child(&mut workload);
+                measurements.duration_ms = Some(start.elapsed().as_millis());
+                measurements.max_lock_wait_ms = Some(observed_wait);
+                return write_failure_report(
+                    o,
+                    "postgres",
+                    "migration",
+                    &format!("could not monitor migration: {error}"),
+                    measurements,
+                );
             }
         }
     }
     let duration = start.elapsed().as_millis();
-    stop_child(&mut workload);
-    let after = table_bytes(&name);
-    let rolled = !o.rollback.is_empty()
-        && psql(
+    measurements.duration_ms = Some(duration);
+    measurements.max_lock_wait_ms = Some(observed_wait);
+    if let Err(error) = finish_workload(&mut workload, "Postgres") {
+        return write_failure_report(o, "postgres", "workload", &error, measurements);
+    }
+    let after = match table_bytes(&name) {
+        Ok(value) => value,
+        Err(error) => {
+            return write_failure_report(o, "postgres", "measurement", &error, measurements)
+        }
+    };
+    measurements.table_bytes_after = Some(after);
+    let rolled = if o.rollback.is_empty() {
+        false
+    } else {
+        psql(
             &name,
             &["-v", "ON_ERROR_STOP=1", "-f", "/work/rollback.sql"],
         )
-        .is_ok();
+        .is_ok()
+    };
     drop(cleanup);
     write_report(
         o,
-        rehearsal_report(
+        completed_report(
             "postgres",
             o,
-            Measurements {
-                duration,
-                during_lock: observed_wait,
-                before,
-                after,
-            },
+            measurements,
             rolled,
             vec![
                 "Estimate from a fresh disposable Postgres container.".into(),
@@ -587,24 +725,40 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
         docker(&["cp", &o.rollback, &format!("{name}:/work/rollback.sql")])?
     }
     clickhouse_file(&name, "/work/fixture.sql")?;
+    let mut measurements = Measurements::default();
+    let before = match clickhouse_bytes(&name) {
+        Ok(value) => value,
+        Err(error) => {
+            return write_failure_report(o, "clickhouse", "measurement", &error, measurements)
+        }
+    };
+    measurements.table_bytes_before = Some(before);
     let mut workload = if !o.workload.is_empty() {
         docker(&["cp", &o.workload, &format!("{name}:/work/workload.sql")])?;
-        Some(
-            Command::new("docker")
-                .args([
-                    "exec",
-                    &name,
-                    "sh",
-                    "-lc",
-                    "for i in $(seq 1 120); do clickhouse-client --multiquery < /work/workload.sql >/dev/null; done",
-                ])
-                .spawn()
-                .map_err(|e| format!("start ClickHouse workload: {e}"))?,
-        )
+        match Command::new("docker")
+            .args([
+                "exec",
+                &name,
+                "sh",
+                "-lc",
+                "clickhouse-client --multiquery < /work/workload.sql",
+            ])
+            .spawn()
+        {
+            Ok(child) => Some(child),
+            Err(error) => {
+                return write_failure_report(
+                    o,
+                    "clickhouse",
+                    "workload",
+                    &format!("could not start supplied workload: {error}"),
+                    measurements,
+                )
+            }
+        }
     } else {
         None
     };
-    let before = clickhouse_bytes(&name);
     let start = Instant::now();
     let mut migration = match Command::new("docker")
         .args([
@@ -618,58 +772,99 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
     {
         Ok(child) => child,
         Err(error) => {
-            stop_child(&mut workload);
-            return Err(format!("start ClickHouse migration: {error}"));
+            cancel_child(&mut workload);
+            return write_failure_report(
+                o,
+                "clickhouse",
+                "migration",
+                &format!("could not start migration: {error}"),
+                measurements,
+            );
         }
     };
     let mut observed_wait = 0;
-    let migration_result = loop {
+    loop {
+        if let Err(error) = check_workload(&mut workload, "ClickHouse") {
+            let _ = migration.kill();
+            let _ = migration.wait();
+            measurements.duration_ms = Some(start.elapsed().as_millis());
+            measurements.max_lock_wait_ms = Some(observed_wait);
+            return write_failure_report(o, "clickhouse", "workload", &error, measurements);
+        }
         match migration.try_wait() {
-            Ok(Some(status)) => break status.success(),
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => {
+                cancel_child(&mut workload);
+                measurements.duration_ms = Some(start.elapsed().as_millis());
+                measurements.max_lock_wait_ms = Some(observed_wait);
+                return write_failure_report(
+                    o,
+                    "clickhouse",
+                    "migration",
+                    "migration command failed",
+                    measurements,
+                );
+            }
             Ok(None) => {
                 observed_wait = match clickhouse_lock_wait_ms(&name) {
                     Ok(wait) => observed_wait.max(wait),
                     Err(error) => {
                         let _ = migration.kill();
                         let _ = migration.wait();
-                        stop_child(&mut workload);
-                        return Err(error);
+                        cancel_child(&mut workload);
+                        measurements.duration_ms = Some(start.elapsed().as_millis());
+                        return write_failure_report(
+                            o,
+                            "clickhouse",
+                            "measurement",
+                            &error,
+                            measurements,
+                        );
                     }
                 };
                 std::thread::sleep(Duration::from_millis(25));
             }
             Err(error) => {
-                stop_child(&mut workload);
-                return Err(error.to_string());
+                cancel_child(&mut workload);
+                measurements.duration_ms = Some(start.elapsed().as_millis());
+                return write_failure_report(
+                    o,
+                    "clickhouse",
+                    "migration",
+                    &format!("could not monitor migration: {error}"),
+                    measurements,
+                );
             }
         }
-    };
+    }
     let duration = start.elapsed().as_millis();
+    measurements.duration_ms = Some(duration);
     observed_wait = match clickhouse_lock_wait_ms(&name) {
         Ok(wait) => observed_wait.max(wait),
         Err(error) => {
-            stop_child(&mut workload);
-            return Err(error);
+            cancel_child(&mut workload);
+            return write_failure_report(o, "clickhouse", "measurement", &error, measurements);
         }
     };
-    stop_child(&mut workload);
-    if !migration_result {
-        return Err("migration failed; the disposable ClickHouse database was removed".into());
+    measurements.max_lock_wait_ms = Some(observed_wait);
+    if let Err(error) = finish_workload(&mut workload, "ClickHouse") {
+        return write_failure_report(o, "clickhouse", "workload", &error, measurements);
     }
-    let after = clickhouse_bytes(&name);
+    let after = match clickhouse_bytes(&name) {
+        Ok(value) => value,
+        Err(error) => {
+            return write_failure_report(o, "clickhouse", "measurement", &error, measurements)
+        }
+    };
+    measurements.table_bytes_after = Some(after);
     let rolled = !o.rollback.is_empty() && clickhouse_file(&name, "/work/rollback.sql").is_ok();
     drop(cleanup);
     write_report(
         o,
-        rehearsal_report(
+        completed_report(
             "clickhouse",
             o,
-            Measurements {
-                duration,
-                during_lock: observed_wait,
-                before,
-                after,
-            },
+            measurements,
             rolled,
             vec![
                 "Estimate from a fresh disposable ClickHouse container.".into(),
@@ -696,10 +891,53 @@ fn validate_input_files(o: &Opt) -> Result<(), String> {
     Ok(())
 }
 
-fn stop_child(child: &mut Option<Child>) {
+fn cancel_child(child: &mut Option<Child>) {
     if let Some(child) = child.as_mut() {
         let _ = child.kill();
         let _ = child.wait();
+    }
+    *child = None;
+}
+
+fn check_workload(child: &mut Option<Child>, engine: &str) -> Result<(), String> {
+    let status = match child.as_mut() {
+        Some(child) => child
+            .try_wait()
+            .map_err(|error| format!("could not monitor {engine} workload: {error}"))?,
+        None => None,
+    };
+    if let Some(status) = status {
+        *child = None;
+        if !status.success() {
+            return Err(format!(
+                "supplied {engine} workload command failed with {}",
+                status
+                    .code()
+                    .map_or_else(|| "a signal".into(), |code| format!("exit {code}"))
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn finish_workload(child: &mut Option<Child>, engine: &str) -> Result<(), String> {
+    check_workload(child, engine)?;
+    let status = match child.as_mut() {
+        Some(child) => child
+            .wait()
+            .map_err(|error| format!("could not wait for {engine} workload: {error}"))?,
+        None => return Ok(()),
+    };
+    *child = None;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "supplied {engine} workload command failed with {}",
+            status
+                .code()
+                .map_or_else(|| "a signal".into(), |code| format!("exit {code}"))
+        ))
     }
 }
 struct Cleanup(String);
@@ -724,9 +962,9 @@ fn psql(name: &str, a: &[&str]) -> Result<(), String> {
     args.extend_from_slice(a);
     docker(&args)
 }
-fn table_bytes(name: &str) -> u64 {
+fn table_bytes(name: &str) -> Result<u64, String> {
     let sql="SELECT COALESCE(sum(pg_total_relation_size(oid)),0) FROM pg_class WHERE relkind IN ('r','m')";
-    let o = Command::new("docker")
+    let output = Command::new("docker")
         .args([
             "exec",
             name,
@@ -738,13 +976,11 @@ fn table_bytes(name: &str) -> u64 {
             "-tAc",
             sql,
         ])
-        .output();
-    o.ok()
-        .and_then(|x| String::from_utf8(x.stdout).ok())
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0)
+        .output()
+        .map_err(|error| format!("measure Postgres table bytes: {error}"))?;
+    parse_measurement(output, "Postgres table bytes")
 }
-fn pg_lock_wait_ms(name: &str) -> u128 {
+fn pg_lock_wait_ms(name: &str) -> Result<u128, String> {
     let sql = "SELECT COALESCE(MAX((EXTRACT(EPOCH FROM (clock_timestamp() - query_start)) * 1000)::bigint), 0) FROM pg_stat_activity WHERE wait_event_type = 'Lock'";
     let out = Command::new("docker")
         .args([
@@ -758,11 +994,9 @@ fn pg_lock_wait_ms(name: &str) -> u128 {
             "-tAc",
             sql,
         ])
-        .output();
-    out.ok()
-        .and_then(|x| String::from_utf8(x.stdout).ok())
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0)
+        .output()
+        .map_err(|error| format!("measure Postgres lock waits: {error}"))?;
+    parse_measurement(out, "Postgres lock wait")
 }
 fn clickhouse(name: &str, sql: &str) -> Result<(), String> {
     docker(&["exec", name, "clickhouse-client", "--query", sql])
@@ -776,15 +1010,27 @@ fn clickhouse_file(name: &str, file: &str) -> Result<(), String> {
         &format!("clickhouse-client --multiquery < {file}"),
     ])
 }
-fn clickhouse_bytes(name: &str) -> u64 {
+fn clickhouse_bytes(name: &str) -> Result<u64, String> {
     let sql = "SELECT coalesce(sum(bytes_on_disk),0) FROM system.parts WHERE active";
-    let o = Command::new("docker")
+    let output = Command::new("docker")
         .args(["exec", name, "clickhouse-client", "--query", sql])
-        .output();
-    o.ok()
-        .and_then(|x| String::from_utf8(x.stdout).ok())
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0)
+        .output()
+        .map_err(|error| format!("measure ClickHouse table bytes: {error}"))?;
+    parse_measurement(output, "ClickHouse table bytes")
+}
+
+fn parse_measurement<T>(output: std::process::Output, label: &str) -> Result<T, String>
+where
+    T: std::str::FromStr,
+{
+    if !output.status.success() {
+        return Err(format!("{label} command failed; no value was recorded"));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|_| format!("{label} was not UTF-8"))?
+        .trim()
+        .parse()
+        .map_err(|_| format!("{label} was not a non-negative whole number"))
 }
 fn clickhouse_lock_wait_ms(name: &str) -> Result<u128, String> {
     let sql = "SELECT coalesce(max(ProfileEvents['RWLockReadersWaitMilliseconds'] + ProfileEvents['RWLockWritersWaitMilliseconds'] + intDiv(ProfileEvents['ContextLockWaitMicroseconds'] + ProfileEvents['PartsLockWaitMicroseconds'], 1000)), 0) FROM system.processes WHERE query NOT LIKE '%system.processes%'";
@@ -792,80 +1038,213 @@ fn clickhouse_lock_wait_ms(name: &str) -> Result<u128, String> {
         .args(["exec", name, "clickhouse-client", "--query", sql])
         .output()
         .map_err(|e| format!("measure ClickHouse lock waits: {e}"))?;
-    if !output.status.success() {
-        return Err(
-            "could not measure ClickHouse lock waits; the disposable database was removed".into(),
-        );
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|_| "ClickHouse lock-wait measurement was not UTF-8".to_string())?
-        .trim()
-        .parse()
-        .map_err(|_| "ClickHouse returned an invalid lock-wait measurement".to_string())
+    parse_measurement(output, "ClickHouse lock wait")
 }
+
+#[derive(Clone, Copy, Serialize)]
+struct Thresholds {
+    max_statement_ms: u128,
+    max_lock_wait_ms: u128,
+    max_table_growth_bytes: u64,
+}
+
+#[derive(Serialize)]
 struct Report {
     engine: String,
     migration: String,
-    duration: u128,
-    during_lock: u128,
-    before: u64,
-    after: u64,
-    rollback: bool,
+    duration_ms: Option<u128>,
+    max_lock_wait_ms: Option<u128>,
+    table_bytes_before: Option<u64>,
+    table_bytes_after: Option<u64>,
+    table_growth_bytes: Option<u64>,
+    rollback_checked: bool,
+    thresholds: Thresholds,
     verdict: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure: Option<String>,
+    decision_reasons: Vec<String>,
     notes: Vec<String>,
 }
+
+#[derive(Default)]
 struct Measurements {
-    duration: u128,
-    during_lock: u128,
-    before: u64,
-    after: u64,
+    duration_ms: Option<u128>,
+    max_lock_wait_ms: Option<u128>,
+    table_bytes_before: Option<u64>,
+    table_bytes_after: Option<u64>,
 }
-fn rehearsal_report(
+
+fn thresholds(o: &Opt) -> Thresholds {
+    Thresholds {
+        max_statement_ms: o.max_statement_ms,
+        max_lock_wait_ms: o.max_lock_wait_ms,
+        max_table_growth_bytes: o.max_table_growth_bytes,
+    }
+}
+
+fn migration_label(o: &Opt) -> String {
+    if o.migration_label.is_empty() {
+        o.migration.clone()
+    } else {
+        o.migration_label.clone()
+    }
+}
+
+fn completed_report(
     engine: &str,
     o: &Opt,
     measurements: Measurements,
     rollback: bool,
-    notes: Vec<String>,
+    mut notes: Vec<String>,
 ) -> Report {
+    let table_growth_bytes = match (
+        measurements.table_bytes_before,
+        measurements.table_bytes_after,
+    ) {
+        (Some(before), Some(after)) => Some(after.saturating_sub(before)),
+        _ => None,
+    };
+    let mut decision_reasons = Vec::new();
+    if !rollback {
+        decision_reasons.push("Rollback SQL was missing or failed.".into());
+    }
+    if measurements.duration_ms > Some(o.max_statement_ms) {
+        decision_reasons.push(format!(
+            "Statement time exceeded the {} ms limit.",
+            o.max_statement_ms
+        ));
+    }
+    if measurements.max_lock_wait_ms > Some(o.max_lock_wait_ms) {
+        decision_reasons.push(format!(
+            "Lock wait exceeded the {} ms limit.",
+            o.max_lock_wait_ms
+        ));
+    }
+    if table_growth_bytes > Some(o.max_table_growth_bytes) {
+        decision_reasons.push(format!(
+            "Table growth exceeded the {} byte limit.",
+            o.max_table_growth_bytes
+        ));
+    }
+    let verdict = if decision_reasons.is_empty() {
+        decision_reasons
+            .push("All required commands completed within the configured limits.".into());
+        "GO"
+    } else {
+        "NO-GO"
+    };
+    notes.push(
+        "Change the limits only after your team documents an approved release budget.".into(),
+    );
     Report {
         engine: engine.into(),
-        migration: if o.migration_label.is_empty() {
-            o.migration.clone()
+        migration: migration_label(o),
+        duration_ms: measurements.duration_ms,
+        max_lock_wait_ms: measurements.max_lock_wait_ms,
+        table_bytes_before: measurements.table_bytes_before,
+        table_bytes_after: measurements.table_bytes_after,
+        table_growth_bytes,
+        rollback_checked: rollback,
+        thresholds: thresholds(o),
+        verdict: verdict.into(),
+        failure_stage: if rollback {
+            None
         } else {
-            o.migration_label.clone()
+            Some("rollback".into())
         },
-        duration: measurements.duration,
-        during_lock: measurements.during_lock,
-        before: measurements.before,
-        after: measurements.after,
-        rollback,
-        verdict: if rollback { "GO" } else { "NO-GO" }.into(),
+        failure: if rollback {
+            None
+        } else {
+            Some("rollback failed or was not supplied".into())
+        },
+        decision_reasons,
         notes,
     }
 }
+
+fn write_failure_report(
+    o: &Opt,
+    engine: &str,
+    stage: &str,
+    failure: &str,
+    measurements: Measurements,
+) -> Result<(), String> {
+    let table_growth_bytes = match (
+        measurements.table_bytes_before,
+        measurements.table_bytes_after,
+    ) {
+        (Some(before), Some(after)) => Some(after.saturating_sub(before)),
+        _ => None,
+    };
+    let report = Report {
+        engine: engine.into(),
+        migration: migration_label(o),
+        duration_ms: measurements.duration_ms,
+        max_lock_wait_ms: measurements.max_lock_wait_ms,
+        table_bytes_before: measurements.table_bytes_before,
+        table_bytes_after: measurements.table_bytes_after,
+        table_growth_bytes,
+        rollback_checked: false,
+        thresholds: thresholds(o),
+        verdict: "NO-GO".into(),
+        failure_stage: Some(stage.into()),
+        failure: Some(failure.into()),
+        decision_reasons: vec![format!("The {stage} stage did not complete: {failure}.")],
+        notes: vec![
+            "No missing measurement was replaced with zero.".into(),
+            format!("Fix the {stage} command, then run the full rehearsal again."),
+        ],
+    };
+    write_report(o, report)
+}
+
 fn sample(o: &Opt) -> Result<(), String> {
     validate_engine(&o.engine)?;
-    write_report(o, rehearsal_report(&o.engine, o, Measurements { duration: 184, during_lock: 0, before: 32768, after: 40960 }, true, vec!["Preview from the bundled sanitized fixture; it is an estimate, not a production measurement.".into(),"The migration adds a defaulted column. Rehearse against a production-shaped fixture before deployment.".into(),"Rollback SQL completed in the same disposable environment.".into()]))
+    write_report(o, completed_report(&o.engine, o, Measurements { duration_ms: Some(184), max_lock_wait_ms: Some(0), table_bytes_before: Some(32768), table_bytes_after: Some(40960) }, true, vec!["Preview from the bundled sanitized fixture; it is an estimate, not a production measurement.".into(),"The migration adds a defaulted column. Rehearse against a production-shaped fixture before deployment.".into(),"Rollback SQL completed in the same disposable environment.".into()]))
 }
-fn escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+
+fn markdown_inline(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|character| {
+            if character.is_control() {
+                character.escape_default().collect::<Vec<_>>()
+            } else if character == '`' {
+                vec!['\'']
+            } else {
+                vec![character]
+            }
+        })
+        .collect()
 }
+
 fn write_report(o: &Opt, r: Report) -> Result<(), String> {
     validate_output_text(&o.output)?;
-    let rollback_failed = !r.rollback;
     fs::create_dir_all(&o.output).map_err(|e| e.to_string())?;
     let dir = PathBuf::from(&o.output);
-    let notes = r
-        .notes
-        .iter()
-        .map(|n| format!("\"{}\"", escape(n)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let json=format!("{{\n  \"engine\": \"{}\",\n  \"migration\": \"{}\",\n  \"duration_ms\": {},\n  \"max_lock_wait_ms\": {},\n  \"table_bytes_before\": {},\n  \"table_bytes_after\": {},\n  \"rollback_checked\": {},\n  \"verdict\": \"{}\",\n  \"notes\": [{}]\n}}\n",escape(&r.engine),escape(&r.migration),r.duration,r.during_lock,r.before,r.after,r.rollback,r.verdict,notes);
+    let json = serde_json::to_string_pretty(&r)
+        .map_err(|error| format!("serialize report: {error}"))?
+        + "\n";
     fs::write(dir.join("report.json"), &json).map_err(|e| e.to_string())?;
-    let mut md=format!("# Migration go/no-go card\n\n**Verdict: {}**\n\n- Engine: {}\n- Migration: `{}`\n- Statement time: {} ms\n- Maximum observed lock wait: {} ms\n- Table bytes: {} → {}\n- Rollback checked: {}\n\n## Operator notes\n\n",r.verdict,r.engine,r.migration,r.duration,r.during_lock,r.before,r.after,r.rollback);
-    for n in r.notes {
-        md.push_str(&format!("- {n}\n"))
+    let show = |value: Option<u128>| value.map_or_else(|| "not measured".into(), |v| v.to_string());
+    let show_bytes =
+        |value: Option<u64>| value.map_or_else(|| "not measured".into(), |v| v.to_string());
+    let mut md=format!("# Migration go/no-go card\n\n**Verdict: {}**\n\n- Engine: {}\n- Migration: `{}`\n- Statement time: {} ms\n- Maximum observed lock wait: {} ms\n- Table bytes: {} → {}\n- Table growth: {} bytes\n- Rollback checked: {}\n\n## Decision limits\n\n- Statement time: at most {} ms\n- Lock wait: at most {} ms\n- Table growth: at most {} bytes\n\n## Decision reasons\n\n",r.verdict,markdown_inline(&r.engine),markdown_inline(&r.migration),show(r.duration_ms),show(r.max_lock_wait_ms),show_bytes(r.table_bytes_before),show_bytes(r.table_bytes_after),show_bytes(r.table_growth_bytes),r.rollback_checked,r.thresholds.max_statement_ms,r.thresholds.max_lock_wait_ms,r.thresholds.max_table_growth_bytes);
+    for reason in &r.decision_reasons {
+        md.push_str(&format!("- {}\n", markdown_inline(reason)));
+    }
+    if let (Some(stage), Some(failure)) = (&r.failure_stage, &r.failure) {
+        md.push_str(&format!(
+            "\n## Failed stage\n\n- Stage: {}\n- Failure: {}\n- Recovery: Fix this stage, then run the full rehearsal again.\n",
+            markdown_inline(stage),
+            markdown_inline(failure)
+        ));
+    }
+    md.push_str("\n## Operator notes\n\n");
+    for note in &r.notes {
+        md.push_str(&format!("- {}\n", markdown_inline(note)));
     }
     fs::write(dir.join("runbook.md"), md).map_err(|e| e.to_string())?;
     if o.json {
@@ -874,13 +1253,20 @@ fn write_report(o: &Opt, r: Report) -> Result<(), String> {
         println!("wrote {}/report.json", o.output);
         println!("wrote {}/runbook.md", o.output);
     }
-    if rollback_failed {
-        return Err("rollback failed; wrote a NO-GO card. Fix or replace the rollback SQL before proceeding".into());
+    if r.verdict == "NO-GO" {
+        let reason = r.failure.as_deref().unwrap_or_else(|| {
+            r.decision_reasons
+                .first()
+                .map_or("a release limit was exceeded", String::as_str)
+        });
+        return Err(format!(
+            "{reason}; wrote a NO-GO card. Fix the cause before proceeding"
+        ));
     }
     Ok(())
 }
 fn usage() {
-    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json]\n  mlr guard DATABASE_URL\n\nA failed rollback writes NO-GO and returns an actionable report. The URL guard accepts only exact loopback hosts. A rehearsal creates and removes its own disposable container.")
+    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json] [LIMITS]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json] [LIMITS]\n  mlr guard DATABASE_URL\n\nLimits:\n  --max-statement-ms N          Default: {DEFAULT_MAX_STATEMENT_MS}\n  --max-lock-wait-ms N          Default: {DEFAULT_MAX_LOCK_WAIT_MS}\n  --max-table-growth-bytes N    Default: {DEFAULT_MAX_TABLE_GROWTH_BYTES}\n\nA failed command, rollback, or exceeded limit writes NO-GO and exits non-zero. The URL guard accepts only exact loopback hosts. A rehearsal creates and removes its own disposable container.")
 }
 #[cfg(test)]
 mod tests {
@@ -1002,14 +1388,14 @@ mod tests {
             output: d.to_string_lossy().into(),
             ..Default::default()
         };
-        let report = rehearsal_report(
+        let report = completed_report(
             engine,
             &opt,
             Measurements {
-                duration: 1,
-                during_lock: 0,
-                before: 1,
-                after: 1,
+                duration_ms: Some(1),
+                max_lock_wait_ms: Some(0),
+                table_bytes_before: Some(1),
+                table_bytes_after: Some(1),
             },
             false,
             vec![],

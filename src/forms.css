@@ -1,0 +1,5 @@
+input:focus-visible,
+#how:focus-visible {
+  outline: 4px solid var(--blue);
+  outline-offset: 4px;
+}

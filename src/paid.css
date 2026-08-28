@@ -1,1 +1,38 @@
-.paid{padding:45px 0;border-top:var(--line);margin-bottom:48px}.paid p{max-width:60ch}.paid form{display:flex;flex-wrap:wrap;gap:10px;align-items:end}.paid label{display:block;width:100%;font-weight:800}.paid input{min-height:46px;min-width:min(100%,360px);border:var(--line);background:var(--surface);font:inherit;padding:8px}
+.paid {
+  padding: 45px 0;
+  border-top: var(--line);
+  margin-bottom: 48px;
+}
+
+.paid > p { max-width: 64ch; }
+.paid form { margin-top: 28px; }
+.paid label { display: block; font-weight: 800; }
+.paid form p { margin: 4px 0 10px; max-width: 64ch; }
+.paid form > div { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.paid input {
+  min-height: 46px;
+  width: min(100%, 390px);
+  border: var(--line);
+  background: var(--surface);
+  font: inherit;
+  padding: 8px;
+}
+
+.quiet { box-shadow: none; }
+.operator-checklist {
+  margin-top: 32px;
+  padding: 20px;
+  border: var(--line);
+  background: var(--surface);
+  box-shadow: 7px 7px 0 var(--blue);
+  max-width: 760px;
+}
+.operator-checklist h3 {
+  font-family: 'Arial Black', Impact, sans-serif;
+  font-size: 1.35rem;
+  margin: 0 0 12px;
+}
+.operator-checklist ol { margin-bottom: 0; }
+.legal-links { margin-top: 32px; font-size: .92rem; }
+.legal-links a { display: inline-flex; align-items: center; min-height: 44px; padding-inline: 4px; }
+[hidden] { display: none !important; }

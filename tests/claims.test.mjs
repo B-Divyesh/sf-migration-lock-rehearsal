@@ -9,8 +9,9 @@ import AxeBuilder from '@axe-core/playwright'
 import { chromium } from 'playwright'
 
 const root = process.cwd()
-execFileSync('cargo', ['build', '--quiet'], { cwd: root, stdio: 'pipe' })
-const cli = join(root, 'target', 'debug', 'mlr')
+const cargoTarget = process.env.CARGO_TARGET_DIR ?? join(root, 'target', 'test-suite')
+execFileSync('cargo', ['build', '--quiet'], { cwd: root, stdio: 'pipe', env: { ...process.env, CARGO_TARGET_DIR: cargoTarget } })
+const cli = join(cargoTarget, 'debug', 'mlr')
 
 function runCli(args, options = {}) {
   return spawnSync(cli, args, {
@@ -24,7 +25,7 @@ function assertSuccess(result) {
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
 }
 
-function makeFakeDocker({ failMigration = false, failRollback = false } = {}) {
+function makeFakeDocker({ failMigration = false, failRollback = false, failWorkload = false, delayWorkloadFailure = false, failMeasurement = false, highLock = false, highTable = false } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), 'mlr-docker-'))
   const bin = join(sandbox, 'bin')
   const state = join(sandbox, 'state')
@@ -41,11 +42,28 @@ if test "\${1:-}" = cp; then
 fi
 test "\${1:-}" = exec || exit 0
 case "$*" in
-  *"ProfileEvents"*) printf '37\\n'; exit 0 ;;
-  *"pg_stat_activity"*) printf '31\\n'; exit 0 ;;
-  *"pg_total_relation_size"*) printf '32768\\n'; exit 0 ;;
-  *"bytes_on_disk"*) printf '40960\\n'; exit 0 ;;
-  *"/work/workload.sql"*) touch "$MLR_FAKE_STATE/workload-running"; sleep 1; exit 0 ;;
+  *"ProfileEvents"*)
+    test "\${MLR_FAIL_MEASUREMENT:-0}" = 1 && exit 23
+    test "\${MLR_HIGH_LOCK:-0}" = 1 && printf '900000\\n' || printf '37\\n'
+    exit 0 ;;
+  *"pg_stat_activity"*)
+    test "\${MLR_FAIL_MEASUREMENT:-0}" = 1 && exit 23
+    test "\${MLR_HIGH_LOCK:-0}" = 1 && printf '900000\\n' || printf '31\\n'
+    exit 0 ;;
+  *"pg_total_relation_size"*)
+    test "\${MLR_FAIL_MEASUREMENT:-0}" = 1 && exit 23
+    counter="$MLR_FAKE_STATE/pg-measurements"; count=0; test ! -f "$counter" || count=$(cat "$counter"); count=$((count + 1)); printf '%s' "$count" > "$counter"
+    if test "\${MLR_HIGH_TABLE:-0}" = 1 && test "$count" -gt 1; then printf '999999999999\\n'; elif test "$count" -gt 1; then printf '40960\\n'; else printf '32768\\n'; fi
+    exit 0 ;;
+  *"bytes_on_disk"*)
+    test "\${MLR_FAIL_MEASUREMENT:-0}" = 1 && exit 23
+    counter="$MLR_FAKE_STATE/ch-measurements"; count=0; test ! -f "$counter" || count=$(cat "$counter"); count=$((count + 1)); printf '%s' "$count" > "$counter"
+    if test "\${MLR_HIGH_TABLE:-0}" = 1 && test "$count" -gt 1; then printf '999999999999\\n'; elif test "$count" -gt 1; then printf '49152\\n'; else printf '40960\\n'; fi
+    exit 0 ;;
+  *"/work/workload.sql"*)
+    touch "$MLR_FAKE_STATE/workload-running"
+    if test "\${MLR_FAIL_WORKLOAD:-0}" = 1; then test "\${MLR_DELAY_WORKLOAD_FAILURE:-0}" = 0 || sleep 0.35; exit 19; fi
+    sleep 1; exit 0 ;;
   *"/work/migration.sql"*)
     sleep 0.05
     test -f "$MLR_FAKE_STATE/workload-running" && touch "$MLR_FAKE_STATE/overlap"
@@ -68,6 +86,11 @@ exit 0
       MLR_FAKE_STATE: state,
       MLR_FAIL_MIGRATION: failMigration ? '1' : '0',
       MLR_FAIL_ROLLBACK: failRollback ? '1' : '0',
+      MLR_FAIL_WORKLOAD: failWorkload ? '1' : '0',
+      MLR_DELAY_WORKLOAD_FAILURE: delayWorkloadFailure ? '1' : '0',
+      MLR_FAIL_MEASUREMENT: failMeasurement ? '1' : '0',
+      MLR_HIGH_LOCK: highLock ? '1' : '0',
+      MLR_HIGH_TABLE: highTable ? '1' : '0',
     },
   }
 }
@@ -149,7 +172,7 @@ test('@claim:site-private static site stays same-origin and stores no visitor da
           assert.ok((await page.title()).includes('Migration Lock Rehearsal'))
           assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
           const axe = await new AxeBuilder({ page }).analyze()
-          assert.deepEqual(axe.violations.filter(item => ['serious', 'critical'].includes(item.impact ?? '')).map(item => item.id), [])
+          assert.deepEqual(axe.violations.map(item => item.id), [])
         }
         assert.ok(requests.length > 0)
         assert.ok(requests.every(url => new URL(url).origin === origin), requests.join('\n'))
@@ -196,6 +219,82 @@ test('@claim:site-private static site stays same-origin and stores no visitor da
   assert.equal(policy.responseOverrides['404'].statusCode, 404)
   assert.match(policy.globalHeaders['Content-Security-Policy'], /connect-src 'self'/)
   assert.equal(policy.globalHeaders['X-Content-Type-Options'], 'nosniff')
+})
+
+test('route metadata, section links, and ARIA remain valid at desktop and mobile widths', async () => {
+  await withSite(async origin => {
+    const routes = {
+      '/': ['Migration Lock Rehearsal — Test database changes', 'https://migration-lock-rehearsal.sociobot.in/'],
+      '/demo': ['Demo — Migration Lock Rehearsal', 'https://migration-lock-rehearsal.sociobot.in/demo'],
+      '/privacy': ['Privacy — Migration Lock Rehearsal', 'https://migration-lock-rehearsal.sociobot.in/privacy'],
+      '/terms': ['Terms — Migration Lock Rehearsal', 'https://migration-lock-rehearsal.sociobot.in/terms'],
+    }
+    for (const [path, [title, canonical]] of Object.entries(routes)) {
+      const documentPath = path === '/' ? '/' : `${path}/index.html`
+      const html = await (await fetch(origin + documentPath)).text()
+      assert.match(html, new RegExp(`<title>${title}</title>`))
+      assert.match(html, new RegExp(`rel="canonical" href="${canonical.replaceAll('/', '\\/')}"`))
+      assert.match(html, new RegExp(`property="og:url" content="${canonical.replaceAll('/', '\\/')}"`))
+    }
+    const policy = JSON.parse(readFileSync(join(root, 'public', 'staticwebapp.config.json'), 'utf8'))
+    for (const path of ['/demo', '/privacy', '/terms']) {
+      assert.equal(policy.routes.find(route => route.route === path)?.rewrite, `${path}/index.html`)
+    }
+
+    const browser = await chromium.launch({ headless: true })
+    try {
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+        const context = await browser.newContext({ viewport })
+        const page = await context.newPage()
+        await page.goto(origin + '/')
+        await page.getByRole('link', { name: 'How it works' }).click()
+        assert.equal(new URL(page.url()).hash, '#how')
+        assert.equal(await page.evaluate(() => document.activeElement?.id), 'how')
+        await page.waitForFunction(() => scrollY > 100)
+        assert.ok(await page.evaluate(() => scrollY > 100), `section link did not scroll at ${viewport.width}px`)
+        await page.goto(origin + '/demo')
+        const axe = await new AxeBuilder({ page }).analyze()
+        assert.ok(!axe.violations.some(item => item.id === 'aria-allowed-role'), JSON.stringify(axe.violations))
+        assert.equal(await page.locator('aside[role="status"]').count(), 0)
+        await context.close()
+      }
+    } finally { await browser.close() }
+  })
+})
+
+test('@claim:paid-license returned and restored Sociobot licenses verify, cache, reveal, and remove the paid checklist', async () => {
+  await withSite(async origin => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const context = await browser.newContext()
+      const page = await context.newPage()
+      let verifyRequests = 0
+      await page.route('https://api.sociobot.in/**', async route => {
+        verifyRequests += 1
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ valid: true, reason: 'ok', expires_at: null }) })
+      })
+      await page.goto(origin + '/?license=returned-token')
+      await page.getByText('License active.', { exact: true }).waitFor()
+      assert.equal(page.url(), origin + '/')
+      assert.equal(await page.evaluate(() => localStorage.getItem('sb_license:migration-lock-rehearsal')), 'returned-token')
+      await page.getByRole('heading', { name: 'Operator review checklist', exact: true }).waitFor()
+      assert.equal(verifyRequests, 1)
+
+      await page.reload()
+      await page.getByText('License active.', { exact: true }).waitFor()
+      assert.equal(verifyRequests, 1, 'a fresh cached verdict should not verify twice in one day')
+      assert.equal(await page.getByRole('link', { name: 'Buy operator license — $29' }).getAttribute('href'), 'https://api.sociobot.in/api/v1/products/migration-lock-rehearsal/checkout')
+
+      await page.getByRole('button', { name: 'Remove saved license' }).click()
+      assert.deepEqual(await page.evaluate(() => ({ license: localStorage.getItem('sb_license:migration-lock-rehearsal'), cache: localStorage.getItem('sb_license:migration-lock-rehearsal:verification') })), { license: null, cache: null })
+      await page.getByLabel('Have a license? Paste it.').fill('restored-token')
+      await page.getByRole('button', { name: 'Restore license' }).click()
+      await page.getByText('License active.', { exact: true }).waitFor()
+      assert.equal(verifyRequests, 2)
+      assert.equal(await page.evaluate(() => localStorage.getItem('sb_license:migration-lock-rehearsal')), 'restored-token')
+      await context.close()
+    } finally { await browser.close() }
+  })
 })
 
 test('@claim:supported-engines dry-run cards accept only Postgres and ClickHouse', () => {
@@ -302,6 +401,91 @@ test('@claim:docker-rehearsal supplied SQL and workload produce measured cards f
       assert.equal(report.verdict, 'GO')
     } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
   }
+})
+
+test('@claim:failed-command-no-go failed workload, measurement, and migration commands write NO-GO artifacts', () => {
+  for (const engine of ['postgres', 'clickhouse']) {
+    for (const scenario of [
+      { name: 'workload', stage: 'workload', options: { failWorkload: true } },
+      { name: 'workload-delayed', stage: 'workload', options: { failWorkload: true, delayWorkloadFailure: true } },
+      { name: 'measurement', stage: 'measurement', options: { failMeasurement: true } },
+      { name: 'migration', stage: 'migration', options: { failMigration: true } },
+    ]) {
+      const fake = makeFakeDocker(scenario.options)
+      const output = join(fake.sandbox, `${engine}-${scenario.name}`)
+      try {
+        const result = runCli(['demo', '--engine', engine, '--output', output, '--json'], { cwd: fake.sandbox, env: fake.env })
+        assert.notEqual(result.status, 0, `${engine} ${scenario.name} unexpectedly succeeded\n${result.stdout}\n${result.stderr}\n${readFileSync(fake.log, 'utf8')}`)
+        const fileReport = JSON.parse(readFileSync(join(output, 'report.json'), 'utf8'))
+        const stdoutReport = JSON.parse(result.stdout)
+        assert.equal(fileReport.verdict, 'NO-GO')
+        assert.equal(fileReport.failure_stage, scenario.stage)
+        if (scenario.stage === 'workload') assert.match(fileReport.failure, /exit 19/)
+        assert.deepEqual(stdoutReport, fileReport)
+        assert.match(readFileSync(join(output, 'runbook.md'), 'utf8'), new RegExp(`Failed stage[\\s\\S]*Stage: ${scenario.stage}[\\s\\S]*Recovery:`))
+        if (scenario.stage === 'measurement') {
+          assert.equal(fileReport.table_bytes_before, null)
+          assert.doesNotMatch(fileReport.failure, /recorded.*zero/i)
+        }
+      } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
+    }
+  }
+})
+
+test('@claim:threshold-verdict statement, lock, and table limits determine GO or NO-GO', () => {
+  for (const engine of ['postgres', 'clickhouse']) {
+    for (const scenario of [
+      { option: '--max-statement-ms', value: '1', reason: /Statement time exceeded/ },
+      { option: '--max-lock-wait-ms', value: '30', reason: /Lock wait exceeded/ },
+      { option: '--max-table-growth-bytes', value: '4096', reason: /Table growth exceeded/ },
+    ]) {
+      const fake = makeFakeDocker()
+      const output = join(fake.sandbox, `${engine}-${scenario.option.slice(2)}`)
+      try {
+        const result = runCli(['demo', '--engine', engine, '--output', output, scenario.option, scenario.value], { cwd: fake.sandbox, env: fake.env })
+        assert.notEqual(result.status, 0)
+        const report = JSON.parse(readFileSync(join(output, 'report.json'), 'utf8'))
+        assert.equal(report.verdict, 'NO-GO')
+        assert.match(report.decision_reasons.join(' '), scenario.reason)
+        assert.equal(report.thresholds[scenario.option.slice(2).replaceAll('-', '_')], Number(scenario.value))
+        assert.match(readFileSync(join(output, 'runbook.md'), 'utf8'), /Decision limits[\s\S]*Statement time:[\s\S]*Lock wait:[\s\S]*Table growth:/)
+      } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
+    }
+
+    const extreme = makeFakeDocker({ highLock: true, highTable: true })
+    const extremeOutput = join(extreme.sandbox, `${engine}-extreme`)
+    try {
+      const result = runCli(['demo', '--engine', engine, '--output', extremeOutput], { cwd: extreme.sandbox, env: extreme.env })
+      assert.notEqual(result.status, 0)
+      const report = JSON.parse(readFileSync(join(extremeOutput, 'report.json'), 'utf8'))
+      assert.equal(report.max_lock_wait_ms, 900000)
+      assert.equal(report.table_bytes_after, 999999999999)
+      assert.equal(report.verdict, 'NO-GO')
+      assert.match(report.decision_reasons.join(' '), /Lock wait exceeded/)
+      assert.match(report.decision_reasons.join(' '), /Table growth exceeded/)
+    } finally { rmSync(extreme.sandbox, { recursive: true, force: true }) }
+  }
+})
+
+test('@claim:safe-json control characters in valid migration filenames stay valid JSON', () => {
+  const fake = makeFakeDocker()
+  const migration = join(fake.sandbox, 'change\nline.sql')
+  const output = join(fake.sandbox, 'safe-json')
+  try {
+    writeFileSync(migration, 'ALTER TABLE customers ADD COLUMN safe_json UInt8 DEFAULT 0;\n')
+    const result = runCli([
+      'rehearse', '--engine', 'clickhouse',
+      '--fixture', join(root, 'examples/clickhouse/fixture.sql'),
+      '--migration', migration,
+      '--rollback', join(root, 'examples/clickhouse/rollback_customer_flag.sql'),
+      '--workload', join(root, 'examples/clickhouse/read_workload.sql'),
+      '--output', output,
+      '--json',
+    ], { env: fake.env })
+    assertSuccess(result)
+    assert.equal(JSON.parse(result.stdout).migration, migration)
+    assert.equal(JSON.parse(readFileSync(join(output, 'report.json'), 'utf8')).migration, migration)
+  } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
 })
 
 test('@claim:container-cleanup disposable containers are removed after success and failure', () => {

@@ -15,6 +15,8 @@
 
 Buttons shift into their hard shadow on press. The terminal cursor has one restrained blink; reduced-motion users get a static cursor and no transitions. Sections use ruled divider lines instead of soft cards.
 
+The paid checklist uses the same hard-rule instrument language. It appears only after license verification and uses a blue offset shadow to separate purchased reference content from safety-critical free output.
+
 ## Asset plan and provenance
 
 `src/assets/lock-stack.webp` is original factory-generated artwork: a screen-print-like black database cylinder trapped in an orange padlock, blue diagnostic tape, warm paper background, no text or trademarks. Generated with `/opt/fleet/lib/gen-image.sh`, deployment `factory-image`; prompt and sidecar provenance are stored beside the asset. It is displayed as an explanatory hero, not as text.

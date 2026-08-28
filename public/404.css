@@ -1,1 +1,18 @@
-body{margin:0;background:#f4efe3;color:#111;font:18px Arial,sans-serif}main{max-width:720px;margin:15vh auto;padding:24px;border:3px solid #111;box-shadow:9px 9px #0057ff}h1{font:900 clamp(42px,10vw,72px) Impact,Arial,sans-serif;line-height:.95;margin:0 0 20px}a{display:inline-block;background:#ff5c35;color:#111;border:3px solid #111;padding:12px 16px;font-weight:bold;box-shadow:5px 5px #111}
+:root { --paper:#f4efe3; --ink:#111; --blue:#0057ff; --orange:#ff5c35; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--paper); color:var(--ink); font:17px/1.5 Arial,sans-serif; }
+a { color:inherit; text-decoration-thickness:2px; text-underline-offset:3px; }
+a:focus-visible { outline:4px solid var(--blue); outline-offset:4px; }
+.skip { position:fixed; left:8px; top:-60px; background:var(--blue); color:#fff; padding:10px; z-index:5; }
+.skip:focus { top:8px; }
+header, main, footer { width:min(1180px,100%); margin:auto; padding-inline:24px; }
+header { min-height:76px; display:flex; align-items:center; justify-content:space-between; border-bottom:3px solid var(--ink); }
+.wordmark { display:inline-flex; align-items:center; min-height:44px; font:900 26px 'Arial Black',Impact,sans-serif; text-decoration:none; }
+.wordmark span { color:var(--orange); }
+nav { display:flex; gap:8px; font-weight:700; }
+nav a, footer a { display:inline-flex; align-items:center; min-height:44px; padding-inline:8px; }
+main { min-height:62vh; padding-top:12vh; padding-bottom:12vh; }
+h1 { max-width:12ch; font:900 clamp(42px,10vw,72px)/.95 Impact,Arial,sans-serif; margin:0 0 20px; }
+.button { display:inline-flex; align-items:center; min-height:46px; background:var(--orange); border:3px solid var(--ink); padding:10px 16px; font-weight:bold; box-shadow:5px 5px var(--ink); text-decoration:none; }
+footer { border-top:3px solid var(--ink); padding-top:22px; padding-bottom:30px; display:flex; justify-content:space-between; gap:20px; font-size:.86rem; }
+@media(max-width:650px) { header { align-items:flex-start; padding-top:14px; padding-bottom:14px; } nav { font-size:.9rem; } footer { display:block; } }
