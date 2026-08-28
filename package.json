@@ -7,10 +7,11 @@
     "dev": "vite",
     "build": "npm run build:site",
     "build:site": "vite build --outDir dist/site",
-    "test": "cargo test && node --test tests/*.test.mjs",
+    "test": "node scripts/test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "cargo fmt --check && cargo clippy --all-targets -- -D warnings",
-    "preview": "vite preview --outDir dist/site"
+    "preview": "vite preview --outDir dist/site",
+    "verify:url": "./verify-url.sh"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

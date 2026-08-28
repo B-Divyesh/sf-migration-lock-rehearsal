@@ -1,51 +1,72 @@
 [
   {
     "id": "demo-report",
-    "claim": "The bundled demo writes a go/no-go runbook.",
+    "claim": "The bundled dry-run demo writes a go/no-go JSON report and runbook.",
     "where": "landing demo terminal, README",
     "test": "npm test -- --test-name-pattern @claim:demo-report",
-    "sandbox": "fresh temporary directory; mlr demo --dry-run; assert report.json and runbook.md"
+    "sandbox": "fresh temporary directory; run the release CLI demo; assert report.json and runbook.md contain GO and rollback status"
   },
   {
     "id": "local-only",
-    "claim": "It refuses remote database URLs.",
-    "where": "landing privacy section, README",
+    "claim": "The URL guard accepts only an exact localhost or loopback host and refuses remote-looking URLs.",
+    "where": "landing privacy section, README, CLI help",
     "test": "npm test -- --test-name-pattern @claim:local-only",
-    "sandbox": "run mlr guard with a production-looking URL and assert a non-zero exit"
+    "sandbox": "release CLI; accept exact IPv4/IPv6 loopback URLs; refuse remote hosts containing localhost, disposable, .test, credentials, or query decoys"
   },
   {
-    "id": "site-no-third-party",
-    "claim": "The documentation site loads no third-party scripts or fonts.",
-    "where": "landing facts, README",
-    "test": "npm test -- --test-name-pattern @claim:site-no-third-party",
-    "sandbox": "build the static site and inspect emitted HTML, CSS, and JavaScript for http URLs"
+    "id": "site-private",
+    "claim": "The documentation site makes only same-origin requests and stores no visitor data.",
+    "where": "landing facts, privacy page, README",
+    "test": "npm test -- --test-name-pattern @claim:site-private",
+    "sandbox": "fresh desktop and 390px browser contexts; inspect every request, local/session storage and cookies across all routes"
   },
   {
     "id": "supported-engines",
-    "claim": "Rehearses Postgres and ClickHouse migrations.",
-    "where": "README",
+    "claim": "The CLI supports Postgres and ClickHouse and rejects other engine names.",
+    "where": "README, CLI help",
     "test": "npm test -- --test-name-pattern @claim:supported-engines",
-    "sandbox": "fresh temporary directory; run dry-run cards for Postgres and ClickHouse, then reject MySQL"
+    "sandbox": "fresh temporary directory; produce dry-run cards for Postgres and ClickHouse; reject MySQL before creating output"
   },
   {
     "id": "demo-reset",
-    "claim": "The CLI demo reset removes its named demo folder.",
-    "where": ".factory/demo.md",
+    "claim": "Demo reset deletes only a directory marked by a prior mlr demo run.",
+    "where": ".factory/demo.md, README",
     "test": "npm test -- --test-name-pattern @claim:demo-reset",
-    "sandbox": "fresh temporary directory; create a dry-run card, reset the explicit output directory, and assert it is gone"
+    "sandbox": "temporary paths only; remove one marked demo, then prove unmarked, workspace, home, current-directory and symlink targets survive"
   },
   {
     "id": "invented-sample",
-    "claim": "The bundled demo uses invented customer records.",
+    "claim": "The bundled Postgres and ClickHouse demos use invented customer records with no connection URL.",
     "where": "landing facts, README, demo page",
     "test": "npm test -- --test-name-pattern @claim:invented-sample",
-    "sandbox": "read the shipped fixture and assert the documented invented records and no connection URL"
+    "sandbox": "read both shipped fixtures; assert documented invented records and absence of database connection URLs"
   },
   {
     "id": "chosen-output",
-    "claim": "The CLI writes reports to the output folder you choose.",
+    "claim": "Reports stay in the non-blank output directory the operator names.",
     "where": "landing facts, privacy page, README",
     "test": "npm test -- --test-name-pattern @claim:chosen-output",
-    "sandbox": "fresh temporary directory; run dry-run with an explicit output directory and assert both report files occur there"
+    "sandbox": "fresh working directory; assert both reports occur only below the chosen output and a blank output fails without files"
+  },
+  {
+    "id": "docker-rehearsal",
+    "claim": "A Docker rehearsal loads supplied SQL, overlaps the workload with the migration, and records time, lock waits, table bytes, and rollback status.",
+    "where": "landing how-it-works and install sections, README",
+    "test": "npm test -- --test-name-pattern @claim:docker-rehearsal",
+    "sandbox": "deterministic Docker command double for both engines; assert command ordering and overlap plus measured report fields"
+  },
+  {
+    "id": "container-cleanup",
+    "claim": "The CLI removes its disposable Docker container after a successful or failed rehearsal.",
+    "where": "landing install section, README, CLI help",
+    "test": "npm test -- --test-name-pattern @claim:container-cleanup",
+    "sandbox": "deterministic Docker command double; assert docker rm -f after both a successful run and a failed migration"
+  },
+  {
+    "id": "rollback-no-go",
+    "claim": "A missing or failed rollback writes NO-GO and exits non-zero for Postgres and ClickHouse.",
+    "where": "README, CLI help",
+    "test": "npm test -- --test-name-pattern @claim:rollback-no-go",
+    "sandbox": "deterministic Docker command double omits and fails rollback for each engine; assert exit status, JSON verdict and runbook verdict"
   }
 ]

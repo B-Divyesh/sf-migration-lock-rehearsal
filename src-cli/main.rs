@@ -1,11 +1,22 @@
 use std::{
     env, fs,
+    net::IpAddr,
     path::{Path, PathBuf},
-    process::{Command, ExitCode},
+    process::{Child, Command, ExitCode},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const VERSION: &str = "0.1.0";
+const DEMO_MARKER: &str = ".mlr-demo";
+const DEMO_MARKER_CONTENT: &str = "migration-lock-rehearsal demo directory\n";
+const POSTGRES_FIXTURE: &str = include_str!("../examples/postgres/fixture.sql");
+const POSTGRES_MIGRATION: &str = include_str!("../examples/postgres/add_customer_flag.sql");
+const POSTGRES_ROLLBACK: &str = include_str!("../examples/postgres/rollback_customer_flag.sql");
+const POSTGRES_WORKLOAD: &str = include_str!("../examples/postgres/read_workload.sql");
+const CLICKHOUSE_FIXTURE: &str = include_str!("../examples/clickhouse/fixture.sql");
+const CLICKHOUSE_MIGRATION: &str = include_str!("../examples/clickhouse/add_customer_flag.sql");
+const CLICKHOUSE_ROLLBACK: &str = include_str!("../examples/clickhouse/rollback_customer_flag.sql");
+const CLICKHOUSE_WORKLOAD: &str = include_str!("../examples/clickhouse/read_workload.sql");
 #[derive(Default)]
 struct Opt {
     engine: String,
@@ -18,6 +29,7 @@ struct Opt {
     json: bool,
     reset: bool,
     output_specified: bool,
+    migration_label: String,
 }
 fn main() -> ExitCode {
     match run() {
@@ -48,10 +60,17 @@ fn run() -> Result<(), String> {
                 return Err("usage: mlr guard <database-url>".into());
             }
             safe_target(&a[2])?;
-            println!("allowed: local or explicitly disposable target");
+            println!("allowed: exact localhost or loopback target");
             Ok(())
         }
         "demo" => {
+            if a[2..]
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+            {
+                usage();
+                return Ok(());
+            }
             let mut o = parse(&a[2..], true)?;
             validate_engine(&o.engine)?;
             if o.engine == "clickhouse" {
@@ -63,20 +82,88 @@ fn run() -> Result<(), String> {
             if o.reset {
                 return reset_demo(&o);
             }
-            if o.dry {
-                sample(&o)
+            prepare_demo_output(&o)?;
+            let bundled = if o.dry {
+                None
             } else {
-                rehearse(&o)
+                let bundled = DemoInputs::create(&o.engine)?;
+                o.migration_label = o.migration.clone();
+                o.fixture = bundled.file("fixture.sql");
+                o.migration = bundled.file("migration.sql");
+                o.rollback = bundled.file("rollback.sql");
+                o.workload = bundled.file("workload.sql");
+                Some(bundled)
+            };
+            let result = if o.dry { sample(&o) } else { rehearse(&o) };
+            drop(bundled);
+            result
+        }
+        "rehearse" => {
+            if a[2..]
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+            {
+                usage();
+                Ok(())
+            } else {
+                rehearse(&parse(&a[2..], false)?)
             }
         }
-        "rehearse" => rehearse(&parse(&a[2..], false)?),
         x => Err(format!("unknown command: {x}")),
+    }
+}
+
+struct DemoInputs(PathBuf);
+
+impl DemoInputs {
+    fn create(engine: &str) -> Result<Self, String> {
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let root = env::temp_dir().join(format!("mlr-inputs-{}-{id}", std::process::id()));
+        fs::create_dir(&root).map_err(|e| format!("create bundled demo inputs: {e}"))?;
+        let inputs = Self(root);
+        let files = if engine == "clickhouse" {
+            [
+                ("fixture.sql", CLICKHOUSE_FIXTURE),
+                ("migration.sql", CLICKHOUSE_MIGRATION),
+                ("rollback.sql", CLICKHOUSE_ROLLBACK),
+                ("workload.sql", CLICKHOUSE_WORKLOAD),
+            ]
+        } else {
+            [
+                ("fixture.sql", POSTGRES_FIXTURE),
+                ("migration.sql", POSTGRES_MIGRATION),
+                ("rollback.sql", POSTGRES_ROLLBACK),
+                ("workload.sql", POSTGRES_WORKLOAD),
+            ]
+        };
+        for (name, contents) in files {
+            fs::write(inputs.0.join(name), contents)
+                .map_err(|e| format!("write bundled {name}: {e}"))?;
+        }
+        Ok(inputs)
+    }
+
+    fn file(&self, name: &str) -> String {
+        self.0.join(name).to_string_lossy().into_owned()
+    }
+}
+
+impl Drop for DemoInputs {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 fn parse(a: &[String], demo: bool) -> Result<Opt, String> {
     let mut o = Opt {
         engine: "postgres".into(),
-        output: "./mlr-report".into(),
+        output: if demo {
+            "./mlr-demo".into()
+        } else {
+            "./mlr-report".into()
+        },
         ..Default::default()
     };
     if demo {
@@ -115,6 +202,7 @@ fn parse(a: &[String], demo: bool) -> Result<Opt, String> {
             }
             "--output" => {
                 o.output = get(i)?;
+                validate_output_text(&o.output)?;
                 o.output_specified = true;
                 i += 1
             }
@@ -122,10 +210,6 @@ fn parse(a: &[String], demo: bool) -> Result<Opt, String> {
             "--json" => o.json = true,
             "--reset" if demo => o.reset = true,
             "--reset" => return Err("--reset is available only with `mlr demo`".into()),
-            "--help" | "-h" => {
-                usage();
-                return Ok(o);
-            }
             x => return Err(format!("unknown option {x}")),
         }
         i += 1
@@ -144,42 +228,200 @@ fn reset_demo(o: &Opt) -> Result<(), String> {
     if !o.output_specified {
         return Err("`mlr demo --reset` needs an explicit --output DIR so it cannot remove the default report folder".into());
     }
+    validate_output_text(&o.output)?;
     let target = Path::new(&o.output);
-    if o.output.trim().is_empty()
-        || target == Path::new("/")
-        || target == Path::new(".")
-        || target == Path::new("..")
-    {
-        return Err("refusing to reset this output path; choose a dedicated demo directory".into());
-    }
-    if target.exists() {
-        let cwd = env::current_dir().map_err(|e| e.to_string())?;
-        if target.canonicalize().map_err(|e| e.to_string())? == cwd {
-            return Err("refusing to reset the current working directory; choose a dedicated demo directory".into());
+    match fs::symlink_metadata(target) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!("nothing to remove at {}", o.output);
+            return Ok(());
         }
-        fs::remove_dir_all(target).map_err(|e| format!("remove {}: {e}", o.output))?;
-        println!("removed {}", o.output);
+        Err(error) => return Err(format!("inspect {}: {error}", target.display())),
+    }
+    let canonical = validated_existing_demo_dir(target)?;
+    fs::remove_dir_all(&canonical).map_err(|e| format!("remove {}: {e}", o.output))?;
+    println!("removed {}", o.output);
+    Ok(())
+}
+
+fn validate_output_text(output: &str) -> Result<(), String> {
+    if output.trim().is_empty() {
+        Err("--output must name a non-empty directory".into())
     } else {
-        println!("nothing to remove at {}", o.output);
+        Ok(())
+    }
+}
+
+fn lexical_absolute(path: &Path) -> Result<PathBuf, String> {
+    let source = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir().map_err(|e| e.to_string())?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in source.components() {
+        use std::path::Component;
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    Ok(normalized)
+}
+
+fn reject_broad_target(target: &Path) -> Result<(), String> {
+    if target.parent().is_none() || target.parent() == Some(Path::new("/")) {
+        return Err("refusing to reset a filesystem root or top-level directory".into());
+    }
+    let cwd = env::current_dir()
+        .map_err(|e| e.to_string())?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if cwd.starts_with(target) {
+        return Err("refusing to reset the current working directory or one of its parents".into());
+    }
+    if let Some(home) = env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        if let Ok(home) = home.canonicalize() {
+            if home == target {
+                return Err("refusing to reset the home directory".into());
+            }
+        }
+    }
+    if [".git", ".hg", "Cargo.toml", "package.json"]
+        .iter()
+        .any(|marker| target.join(marker).exists())
+    {
+        return Err("refusing to reset a source workspace".into());
     }
     Ok(())
 }
+
+fn validated_existing_demo_dir(target: &Path) -> Result<PathBuf, String> {
+    let metadata =
+        fs::symlink_metadata(target).map_err(|e| format!("inspect {}: {e}", target.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Err("refusing to reset a symlink; choose the real demo directory".into());
+    }
+    if !metadata.is_dir() {
+        return Err("refusing to reset a path that is not a directory".into());
+    }
+    let canonical = target.canonicalize().map_err(|e| e.to_string())?;
+    if canonical != lexical_absolute(target)? {
+        return Err("refusing to reset a path containing aliases or symlinks".into());
+    }
+    reject_broad_target(&canonical)?;
+    let marker = canonical.join(DEMO_MARKER);
+    let marker_metadata = fs::symlink_metadata(&marker).map_err(|_| {
+        "refusing to reset an unmarked directory; run `mlr demo` with this output first".to_string()
+    })?;
+    if !marker_metadata.is_file()
+        || marker_metadata.file_type().is_symlink()
+        || fs::read_to_string(&marker).map_err(|e| e.to_string())? != DEMO_MARKER_CONTENT
+    {
+        return Err("refusing to reset a directory without a valid mlr demo marker".into());
+    }
+    Ok(canonical)
+}
+
+fn prepare_demo_output(o: &Opt) -> Result<(), String> {
+    validate_output_text(&o.output)?;
+    let target = Path::new(&o.output);
+    match fs::symlink_metadata(target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("demo output must be a real directory, not a file or symlink".into());
+            }
+            let canonical = target.canonicalize().map_err(|e| e.to_string())?;
+            if canonical != lexical_absolute(target)? {
+                return Err("demo output may not contain aliases or symlinks".into());
+            }
+            reject_broad_target(&canonical)?;
+            let marker = canonical.join(DEMO_MARKER);
+            if marker.exists() {
+                validated_existing_demo_dir(target)?;
+            } else if fs::read_dir(&canonical)
+                .map_err(|e| e.to_string())?
+                .next()
+                .is_some()
+            {
+                return Err("demo output already contains files and was not created by mlr; choose an empty directory".into());
+            } else {
+                fs::write(marker, DEMO_MARKER_CONTENT).map_err(|e| e.to_string())?;
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(target).map_err(|e| e.to_string())?;
+            let canonical = target.canonicalize().map_err(|e| e.to_string())?;
+            if canonical != lexical_absolute(target)? {
+                return Err("demo output may not contain aliases or symlinks".into());
+            }
+            reject_broad_target(&canonical)?;
+            fs::write(canonical.join(DEMO_MARKER), DEMO_MARKER_CONTENT)
+                .map_err(|e| e.to_string())?;
+        }
+        Err(error) => return Err(format!("inspect {}: {error}", target.display())),
+    }
+    Ok(())
+}
+
 fn safe_target(target: &str) -> Result<(), String> {
-    let s = target.to_lowercase();
-    if [
-        "localhost",
-        "127.0.0.1",
-        "[::1]",
-        "host.docker.internal",
-        ".test",
-        "disposable",
-    ]
-    .iter()
-    .any(|h| s.contains(h))
+    let error = || {
+        "only URLs whose parsed host is localhost or a loopback IP are allowed; this tool never connects to production".to_string()
+    };
+    if target.trim() != target || target.contains('%') {
+        return Err(error());
+    }
+    let (scheme, rest) = target.split_once("://").ok_or_else(error)?;
+    if !matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "postgres" | "postgresql" | "clickhouse"
+    ) {
+        return Err(error());
+    }
+    let authority = rest.split(['/', '?', '#']).next().ok_or_else(error)?;
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = if let Some(bracketed) = host_port.strip_prefix('[') {
+        let end = bracketed.find(']').ok_or_else(error)?;
+        let suffix = &bracketed[end + 1..];
+        if !suffix.is_empty()
+            && (!suffix.starts_with(':')
+                || suffix[1..].is_empty()
+                || !suffix[1..].chars().all(|c| c.is_ascii_digit()))
+        {
+            return Err(error());
+        }
+        &bracketed[..end]
+    } else {
+        let mut parts = host_port.split(':');
+        let host = parts.next().ok_or_else(error)?;
+        if let Some(port) = parts.next() {
+            if port.is_empty()
+                || !port.chars().all(|c| c.is_ascii_digit())
+                || parts.next().is_some()
+            {
+                return Err(error());
+            }
+        }
+        host
+    };
+    let host = host.trim_end_matches('.');
+    if host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|address| address.is_loopback())
+            .unwrap_or(false)
     {
         Ok(())
     } else {
-        Err("only loopback or explicitly disposable URLs are allowed; this tool never connects to production".into())
+        Err(error())
     }
 }
 fn rehearse(o: &Opt) -> Result<(), String> {
@@ -187,11 +429,7 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     if o.engine == "clickhouse" {
         return rehearse_clickhouse(o);
     }
-    for f in [&o.fixture, &o.migration] {
-        if !Path::new(f).is_file() {
-            return Err(format!("read {f}: file not found"));
-        }
-    }
+    validate_input_files(o)?;
     if Command::new("docker").arg("version").output().is_err() {
         return Err("Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled card".into());
     }
@@ -212,11 +450,16 @@ fn rehearse(o: &Opt) -> Result<(), String> {
         "POSTGRES_DB=rehearsal",
         "postgres:16-alpine",
     ])?;
+    let mut ready = false;
     for _ in 0..30 {
         if psql(&name, &["-c", "SELECT 1"]).is_ok() {
+            ready = true;
             break;
         }
         std::thread::sleep(Duration::from_secs(1))
+    }
+    if !ready {
+        return Err("Postgres did not become ready; the disposable database was removed".into());
     }
     for (src, dst) in [
         (&o.fixture, "/work/fixture.sql"),
@@ -232,13 +475,13 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     }
     psql(&name, &["-f", "/work/fixture.sql"])?;
     let before = table_bytes(&name);
-    let mut workload = if !o.workload.is_empty() && Path::new(&o.workload).is_file() {
-        Command::new("docker").args(["exec", &name, "sh", "-lc", "for i in $(seq 1 120); do psql -U postgres -d rehearsal -f /work/workload.sql >/dev/null; done"]).spawn().ok()
+    let mut workload = if !o.workload.is_empty() {
+        Some(Command::new("docker").args(["exec", &name, "sh", "-lc", "for i in $(seq 1 120); do psql -U postgres -d rehearsal -f /work/workload.sql >/dev/null; done"]).spawn().map_err(|e| format!("start Postgres workload: {e}"))?)
     } else {
         None
     };
     let start = Instant::now();
-    let mut migration = Command::new("docker")
+    let mut migration = match Command::new("docker")
         .args([
             "exec",
             &name,
@@ -253,25 +496,29 @@ fn rehearse(o: &Opt) -> Result<(), String> {
             "/work/migration.sql",
         ])
         .spawn()
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(child) => child,
+        Err(error) => {
+            stop_child(&mut workload);
+            return Err(error.to_string());
+        }
+    };
     let mut observed_wait = 0;
     loop {
         match migration.try_wait().map_err(|e| e.to_string())? {
             Some(status) if status.success() => break,
-            Some(_) => return Err("migration failed; the disposable database was removed".into()),
+            Some(_) => {
+                stop_child(&mut workload);
+                return Err("migration failed; the disposable database was removed".into());
+            }
             None => {
-                if pg_waiters(&name) > 0 {
-                    observed_wait += 25;
-                }
+                observed_wait = observed_wait.max(pg_lock_wait_ms(&name));
                 std::thread::sleep(Duration::from_millis(25));
             }
         }
     }
     let duration = start.elapsed().as_millis();
-    if let Some(child) = workload.as_mut() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+    stop_child(&mut workload);
     let after = table_bytes(&name);
     let rolled = !o.rollback.is_empty()
         && psql(
@@ -302,11 +549,7 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     )
 }
 fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
-    for f in [&o.fixture, &o.migration] {
-        if !Path::new(f).is_file() {
-            return Err(format!("read {f}: file not found"));
-        }
-    }
+    validate_input_files(o)?;
     if Command::new("docker").arg("version").output().is_err() {
         return Err("Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled card".into());
     }
@@ -323,11 +566,16 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
         &name,
         "clickhouse/clickhouse-server:24.8-alpine",
     ])?;
+    let mut ready = false;
     for _ in 0..30 {
         if clickhouse(&name, "SELECT 1").is_ok() {
+            ready = true;
             break;
         };
         std::thread::sleep(Duration::from_secs(1));
+    }
+    if !ready {
+        return Err("ClickHouse did not become ready; the disposable database was removed".into());
     }
     for (src, dst) in [
         (&o.fixture, "/work/fixture.sql"),
@@ -339,14 +587,75 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
         docker(&["cp", &o.rollback, &format!("{name}:/work/rollback.sql")])?
     }
     clickhouse_file(&name, "/work/fixture.sql")?;
-    if !o.workload.is_empty() && Path::new(&o.workload).is_file() {
+    let mut workload = if !o.workload.is_empty() {
         docker(&["cp", &o.workload, &format!("{name}:/work/workload.sql")])?;
-        let _ = clickhouse_file(&name, "/work/workload.sql");
-    }
+        Some(
+            Command::new("docker")
+                .args([
+                    "exec",
+                    &name,
+                    "sh",
+                    "-lc",
+                    "for i in $(seq 1 120); do clickhouse-client --multiquery < /work/workload.sql >/dev/null; done",
+                ])
+                .spawn()
+                .map_err(|e| format!("start ClickHouse workload: {e}"))?,
+        )
+    } else {
+        None
+    };
     let before = clickhouse_bytes(&name);
     let start = Instant::now();
-    clickhouse_file(&name, "/work/migration.sql")?;
+    let mut migration = match Command::new("docker")
+        .args([
+            "exec",
+            &name,
+            "sh",
+            "-lc",
+            "clickhouse-client --multiquery < /work/migration.sql",
+        ])
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            stop_child(&mut workload);
+            return Err(format!("start ClickHouse migration: {error}"));
+        }
+    };
+    let mut observed_wait = 0;
+    let migration_result = loop {
+        match migration.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) => {
+                observed_wait = match clickhouse_lock_wait_ms(&name) {
+                    Ok(wait) => observed_wait.max(wait),
+                    Err(error) => {
+                        let _ = migration.kill();
+                        let _ = migration.wait();
+                        stop_child(&mut workload);
+                        return Err(error);
+                    }
+                };
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                stop_child(&mut workload);
+                return Err(error.to_string());
+            }
+        }
+    };
     let duration = start.elapsed().as_millis();
+    observed_wait = match clickhouse_lock_wait_ms(&name) {
+        Ok(wait) => observed_wait.max(wait),
+        Err(error) => {
+            stop_child(&mut workload);
+            return Err(error);
+        }
+    };
+    stop_child(&mut workload);
+    if !migration_result {
+        return Err("migration failed; the disposable ClickHouse database was removed".into());
+    }
     let after = clickhouse_bytes(&name);
     let rolled = !o.rollback.is_empty() && clickhouse_file(&name, "/work/rollback.sql").is_ok();
     drop(cleanup);
@@ -357,19 +666,41 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
             o,
             Measurements {
                 duration,
-                during_lock: 0,
+                during_lock: observed_wait,
                 before,
                 after,
             },
             rolled,
             vec![
                 "Estimate from a fresh disposable ClickHouse container.".into(),
-                "ClickHouse mutations and merges may continue after a DDL statement returns."
+                "Lock waits are sampled from active ClickHouse profile events while the supplied workload runs."
                     .into(),
+                "ClickHouse mutations and merges may continue after a DDL statement returns.".into(),
                 "Use a production-shaped sanitized fixture before relying on this result.".into(),
             ],
         ),
     )
+}
+
+fn validate_input_files(o: &Opt) -> Result<(), String> {
+    for file in [&o.fixture, &o.migration] {
+        if !Path::new(file).is_file() {
+            return Err(format!("read {file}: file not found"));
+        }
+    }
+    for file in [&o.rollback, &o.workload] {
+        if !file.is_empty() && !Path::new(file).is_file() {
+            return Err(format!("read {file}: file not found"));
+        }
+    }
+    Ok(())
+}
+
+fn stop_child(child: &mut Option<Child>) {
+    if let Some(child) = child.as_mut() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 struct Cleanup(String);
 impl Drop for Cleanup {
@@ -413,8 +744,8 @@ fn table_bytes(name: &str) -> u64 {
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0)
 }
-fn pg_waiters(name: &str) -> u128 {
-    let sql = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'";
+fn pg_lock_wait_ms(name: &str) -> u128 {
+    let sql = "SELECT COALESCE(MAX((EXTRACT(EPOCH FROM (clock_timestamp() - query_start)) * 1000)::bigint), 0) FROM pg_stat_activity WHERE wait_event_type = 'Lock'";
     let out = Command::new("docker")
         .args([
             "exec",
@@ -455,6 +786,23 @@ fn clickhouse_bytes(name: &str) -> u64 {
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0)
 }
+fn clickhouse_lock_wait_ms(name: &str) -> Result<u128, String> {
+    let sql = "SELECT coalesce(max(ProfileEvents['RWLockReadersWaitMilliseconds'] + ProfileEvents['RWLockWritersWaitMilliseconds'] + intDiv(ProfileEvents['ContextLockWaitMicroseconds'] + ProfileEvents['PartsLockWaitMicroseconds'], 1000)), 0) FROM system.processes WHERE query NOT LIKE '%system.processes%'";
+    let output = Command::new("docker")
+        .args(["exec", name, "clickhouse-client", "--query", sql])
+        .output()
+        .map_err(|e| format!("measure ClickHouse lock waits: {e}"))?;
+    if !output.status.success() {
+        return Err(
+            "could not measure ClickHouse lock waits; the disposable database was removed".into(),
+        );
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|_| "ClickHouse lock-wait measurement was not UTF-8".to_string())?
+        .trim()
+        .parse()
+        .map_err(|_| "ClickHouse returned an invalid lock-wait measurement".to_string())
+}
 struct Report {
     engine: String,
     migration: String,
@@ -481,7 +829,11 @@ fn rehearsal_report(
 ) -> Report {
     Report {
         engine: engine.into(),
-        migration: o.migration.clone(),
+        migration: if o.migration_label.is_empty() {
+            o.migration.clone()
+        } else {
+            o.migration_label.clone()
+        },
         duration: measurements.duration,
         during_lock: measurements.during_lock,
         before: measurements.before,
@@ -499,6 +851,7 @@ fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 fn write_report(o: &Opt, r: Report) -> Result<(), String> {
+    validate_output_text(&o.output)?;
     let rollback_failed = !r.rollback;
     fs::create_dir_all(&o.output).map_err(|e| e.to_string())?;
     let dir = PathBuf::from(&o.output);
@@ -527,19 +880,109 @@ fn write_report(o: &Opt, r: Report) -> Result<(), String> {
     Ok(())
 }
 fn usage() {
-    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--output DIR] [--json]\n  mlr guard DATABASE_URL\n\nA failed rollback writes NO-GO and returns an actionable report. The CLI never accepts remote targets. It creates and removes its own disposable container.")
+    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json]\n  mlr guard DATABASE_URL\n\nA failed rollback writes NO-GO and returns an actionable report. The URL guard accepts only exact loopback hosts. A rehearsal creates and removes its own disposable container.")
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn unique_temp(label: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "mlr-test-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
     #[test]
-    fn rejects_remote() {
-        assert!(safe_target("postgres://a@prod.example.com/app").is_err());
-        assert!(safe_target("postgres://a@localhost/app").is_ok())
+    fn parses_the_host_before_allowing_a_database_url() {
+        for target in [
+            "postgres://a@prod.example.com/app",
+            "postgres://ops@localhost.prod.example.com/app",
+            "postgres://disposable@production.example.com/app",
+            "postgres://admin@db.internal.example.test/app",
+            "postgres://prod.example.com/app?host=localhost",
+            "postgres://localhost@production.example.com/app",
+            "postgres://127.0.0.1.example.com/app",
+            "postgres://2130706433/app",
+            "mysql://root@localhost/app",
+        ] {
+            assert!(
+                safe_target(target).is_err(),
+                "unexpectedly allowed {target}"
+            );
+        }
+        for target in [
+            "postgres://a@localhost/app",
+            "postgresql://a@localhost.:5432/app",
+            "postgres://a@127.0.0.1/app",
+            "postgres://a@127.4.3.2:5432/app",
+            "clickhouse://default@[::1]:9000/default",
+        ] {
+            assert!(safe_target(target).is_ok(), "unexpectedly refused {target}");
+        }
+    }
+
+    #[test]
+    fn blank_output_is_rejected_before_writing() {
+        let opt = Opt {
+            engine: "postgres".into(),
+            output: "  ".into(),
+            ..Default::default()
+        };
+        let result = sample(&opt);
+        assert!(result.unwrap_err().contains("non-empty directory"));
+    }
+
+    #[test]
+    fn reset_validation_rejects_broad_unmarked_and_workspace_targets() {
+        assert!(validated_existing_demo_dir(Path::new("/")).is_err());
+        assert!(validated_existing_demo_dir(&env::current_dir().unwrap()).is_err());
+
+        let root = unique_temp("reset-boundaries");
+        let unmarked = root.join("unmarked");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&unmarked).unwrap();
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join(DEMO_MARKER), DEMO_MARKER_CONTENT).unwrap();
+        fs::write(workspace.join("Cargo.toml"), "[workspace]\n").unwrap();
+        assert!(validated_existing_demo_dir(&unmarked).is_err());
+        assert!(validated_existing_demo_dir(&workspace).is_err());
+
+        #[cfg(unix)]
+        {
+            let real = root.join("real");
+            let alias = root.join("alias");
+            fs::create_dir_all(&real).unwrap();
+            fs::write(real.join(DEMO_MARKER), DEMO_MARKER_CONTENT).unwrap();
+            std::os::unix::fs::symlink(&real, &alias).unwrap();
+            assert!(validated_existing_demo_dir(&alias).is_err());
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reset_removes_only_a_marked_demo_child() {
+        let root = unique_temp("reset-marked");
+        let output = root.join("mlr-demo");
+        fs::create_dir_all(&root).unwrap();
+        let opt = Opt {
+            output: output.to_string_lossy().into(),
+            output_specified: true,
+            ..Default::default()
+        };
+        prepare_demo_output(&opt).unwrap();
+        fs::write(output.join("report.json"), "{}\n").unwrap();
+        reset_demo(&opt).unwrap();
+        assert!(!output.exists());
+        assert!(root.exists());
+        let _ = fs::remove_dir_all(root);
     }
     #[test]
     fn sample_writes_files() {
-        let d = env::temp_dir().join("mlr-test-sample");
+        let d = unique_temp("sample");
         let _ = fs::remove_dir_all(&d);
         sample(&Opt {
             engine: "postgres".into(),
@@ -553,7 +996,7 @@ mod tests {
         let _ = fs::remove_dir_all(d);
     }
     fn failed_rollback_writes_no_go_and_returns_actionable_error(engine: &str) {
-        let d = env::temp_dir().join(format!("mlr-test-failed-rollback-{engine}"));
+        let d = unique_temp(&format!("failed-rollback-{engine}"));
         let _ = fs::remove_dir_all(&d);
         let opt = Opt {
             output: d.to_string_lossy().into(),
