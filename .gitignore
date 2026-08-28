@@ -1,5 +1,9 @@
 node_modules/
 dist/
+.env
+*.log
+graphify-out/
+.DS_Store
 target/
 mlr-report/
 mlr-demo/
