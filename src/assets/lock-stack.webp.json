@@ -1,0 +1,7 @@
+{
+  "source": "Factory-generated original artwork",
+  "generator": "/opt/fleet/lib/gen-image.sh",
+  "deployment": "factory-image",
+  "prompt": "Neo-brutalist screen print of a black database cylinder gripped by an orange industrial padlock, blue diagnostic tape and a small measuring gauge, warm off-white paper background. No text, logos, or watermark.",
+  "license": "Created for this product by the factory image deployment"
+}

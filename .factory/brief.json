@@ -1,0 +1,6 @@
+{
+  "slug": "migration-lock-rehearsal",
+  "title": "Migration Lock Rehearsal",
+  "artifact_class": "cli",
+  "summary": "Rehearse a database migration before production."
+}

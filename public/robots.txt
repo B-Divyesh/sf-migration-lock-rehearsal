@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://migration-lock-rehearsal.sociobot.in/sitemap.xml

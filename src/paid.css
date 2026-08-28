@@ -1,0 +1,1 @@
+.paid{padding:45px 0;border-top:var(--line);margin-bottom:48px}.paid p{max-width:60ch}.paid form{display:flex;flex-wrap:wrap;gap:10px;align-items:end}.paid label{display:block;width:100%;font-weight:800}.paid input{min-height:46px;min-width:min(100%,360px);border:var(--line);background:var(--surface);font:inherit;padding:8px}

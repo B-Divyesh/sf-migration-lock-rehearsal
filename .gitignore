@@ -1,6 +1,7 @@
 node_modules/
 dist/
-.env
-*.log
-graphify-out/
-.DS_Store
+target/
+mlr-report/
+mlr-demo/
+src/assets/lock-stack.png
+src/assets/lock-stack.png.json

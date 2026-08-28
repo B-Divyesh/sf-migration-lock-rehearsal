@@ -1,0 +1,15 @@
+[package]
+name = "migration-lock-rehearsal"
+version = "0.1.0"
+edition = "2021"
+description = "Rehearse a migration in a disposable Docker database"
+license = "MIT"
+repository = "https://github.com/B-Divyesh/sf-migration-lock-rehearsal"
+readme = "README.md"
+include = ["src-cli/**", "examples/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", ".factory/demo.md"]
+
+[[bin]]
+name = "mlr"
+path = "src-cli/main.rs"
+
+[dependencies]

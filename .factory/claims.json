@@ -1,0 +1,30 @@
+[
+  {
+    "id": "demo-report",
+    "claim": "The bundled demo writes a go/no-go runbook.",
+    "where": "landing demo terminal, README",
+    "test": "npm test -- --test-name-pattern @claim:demo-report",
+    "sandbox": "fresh temporary directory; mlr demo --dry-run; assert report.json and runbook.md"
+  },
+  {
+    "id": "local-only",
+    "claim": "It refuses remote database URLs.",
+    "where": "landing privacy section, README",
+    "test": "npm test -- --test-name-pattern @claim:local-only",
+    "sandbox": "run mlr guard with a production-looking URL and assert a non-zero exit"
+  },
+  {
+    "id": "site-no-third-party",
+    "claim": "The documentation site loads no third-party scripts or fonts.",
+    "where": "landing facts, README",
+    "test": "npm test -- --test-name-pattern @claim:site-no-third-party",
+    "sandbox": "build the static site and inspect emitted HTML, CSS, and JavaScript for http URLs"
+  },
+  {
+    "id": "license-checkout",
+    "claim": "A $29 one-time operator license has a Sociobot checkout link.",
+    "where": "landing paid tier",
+    "test": "npm test -- --test-name-pattern @claim:license-checkout",
+    "sandbox": "build the static site and assert the official checkout URL and listed price"
+  }
+]
