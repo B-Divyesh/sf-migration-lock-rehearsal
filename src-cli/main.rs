@@ -15,6 +15,9 @@ struct Opt {
     workload: String,
     output: String,
     dry: bool,
+    json: bool,
+    reset: bool,
+    output_specified: bool,
 }
 fn main() -> ExitCode {
     match run() {
@@ -50,11 +53,15 @@ fn run() -> Result<(), String> {
         }
         "demo" => {
             let mut o = parse(&a[2..], true)?;
+            validate_engine(&o.engine)?;
             if o.engine == "clickhouse" {
                 o.fixture = "examples/clickhouse/fixture.sql".into();
                 o.migration = "examples/clickhouse/add_customer_flag.sql".into();
                 o.rollback = "examples/clickhouse/rollback_customer_flag.sql".into();
                 o.workload = "examples/clickhouse/read_workload.sql".into();
+            }
+            if o.reset {
+                return reset_demo(&o);
             }
             if o.dry {
                 sample(&o)
@@ -108,10 +115,13 @@ fn parse(a: &[String], demo: bool) -> Result<Opt, String> {
             }
             "--output" => {
                 o.output = get(i)?;
+                o.output_specified = true;
                 i += 1
             }
             "--dry-run" => o.dry = true,
-            "--json" => {}
+            "--json" => o.json = true,
+            "--reset" if demo => o.reset = true,
+            "--reset" => return Err("--reset is available only with `mlr demo`".into()),
             "--help" | "-h" => {
                 usage();
                 return Ok(o);
@@ -121,6 +131,38 @@ fn parse(a: &[String], demo: bool) -> Result<Opt, String> {
         i += 1
     }
     Ok(o)
+}
+fn validate_engine(engine: &str) -> Result<(), String> {
+    match engine {
+        "postgres" | "clickhouse" => Ok(()),
+        _ => Err(format!(
+            "unknown engine {engine}; use postgres or clickhouse"
+        )),
+    }
+}
+fn reset_demo(o: &Opt) -> Result<(), String> {
+    if !o.output_specified {
+        return Err("`mlr demo --reset` needs an explicit --output DIR so it cannot remove the default report folder".into());
+    }
+    let target = Path::new(&o.output);
+    if o.output.trim().is_empty()
+        || target == Path::new("/")
+        || target == Path::new(".")
+        || target == Path::new("..")
+    {
+        return Err("refusing to reset this output path; choose a dedicated demo directory".into());
+    }
+    if target.exists() {
+        let cwd = env::current_dir().map_err(|e| e.to_string())?;
+        if target.canonicalize().map_err(|e| e.to_string())? == cwd {
+            return Err("refusing to reset the current working directory; choose a dedicated demo directory".into());
+        }
+        fs::remove_dir_all(target).map_err(|e| format!("remove {}: {e}", o.output))?;
+        println!("removed {}", o.output);
+    } else {
+        println!("nothing to remove at {}", o.output);
+    }
+    Ok(())
 }
 fn safe_target(target: &str) -> Result<(), String> {
     let s = target.to_lowercase();
@@ -141,14 +183,9 @@ fn safe_target(target: &str) -> Result<(), String> {
     }
 }
 fn rehearse(o: &Opt) -> Result<(), String> {
+    validate_engine(&o.engine)?;
     if o.engine == "clickhouse" {
         return rehearse_clickhouse(o);
-    }
-    if o.engine != "postgres" {
-        return Err(format!(
-            "unknown engine {}; use postgres or clickhouse",
-            o.engine
-        ));
     }
     for f in [&o.fixture, &o.migration] {
         if !Path::new(f).is_file() {
@@ -245,22 +282,23 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     drop(cleanup);
     write_report(
         o,
-        Report {
-            engine: "postgres".into(),
-            migration: o.migration.clone(),
-            duration,
-            during_lock: observed_wait,
-            before,
-            after,
-            rollback: rolled,
-            verdict: "GO".into(),
-            notes: vec![
+        rehearsal_report(
+            "postgres",
+            o,
+            Measurements {
+                duration,
+                during_lock: observed_wait,
+                before,
+                after,
+            },
+            rolled,
+            vec![
                 "Estimate from a fresh disposable Postgres container.".into(),
                 "Lock waits are sampled from pg_stat_activity while the supplied workload runs."
                     .into(),
                 "Use a production-shaped sanitized fixture before relying on this result.".into(),
             ],
-        },
+        ),
     )
 }
 fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
@@ -314,22 +352,23 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
     drop(cleanup);
     write_report(
         o,
-        Report {
-            engine: "clickhouse".into(),
-            migration: o.migration.clone(),
-            duration,
-            during_lock: 0,
-            before,
-            after,
-            rollback: rolled,
-            verdict: "GO".into(),
-            notes: vec![
+        rehearsal_report(
+            "clickhouse",
+            o,
+            Measurements {
+                duration,
+                during_lock: 0,
+                before,
+                after,
+            },
+            rolled,
+            vec![
                 "Estimate from a fresh disposable ClickHouse container.".into(),
                 "ClickHouse mutations and merges may continue after a DDL statement returns."
                     .into(),
                 "Use a production-shaped sanitized fixture before relying on this result.".into(),
             ],
-        },
+        ),
     )
 }
 struct Cleanup(String);
@@ -427,13 +466,40 @@ struct Report {
     verdict: String,
     notes: Vec<String>,
 }
+struct Measurements {
+    duration: u128,
+    during_lock: u128,
+    before: u64,
+    after: u64,
+}
+fn rehearsal_report(
+    engine: &str,
+    o: &Opt,
+    measurements: Measurements,
+    rollback: bool,
+    notes: Vec<String>,
+) -> Report {
+    Report {
+        engine: engine.into(),
+        migration: o.migration.clone(),
+        duration: measurements.duration,
+        during_lock: measurements.during_lock,
+        before: measurements.before,
+        after: measurements.after,
+        rollback,
+        verdict: if rollback { "GO" } else { "NO-GO" }.into(),
+        notes,
+    }
+}
 fn sample(o: &Opt) -> Result<(), String> {
-    write_report(o,Report{engine:o.engine.clone(),migration:o.migration.clone(),duration:184,during_lock:0,before:32768,after:40960,rollback:true,verdict:"GO".into(),notes:vec!["Preview from the bundled sanitized fixture; it is an estimate, not a production measurement.".into(),"The migration adds a defaulted column. Rehearse against a production-shaped fixture before deployment.".into(),"Rollback SQL completed in the same disposable environment.".into()]})
+    validate_engine(&o.engine)?;
+    write_report(o, rehearsal_report(&o.engine, o, Measurements { duration: 184, during_lock: 0, before: 32768, after: 40960 }, true, vec!["Preview from the bundled sanitized fixture; it is an estimate, not a production measurement.".into(),"The migration adds a defaulted column. Rehearse against a production-shaped fixture before deployment.".into(),"Rollback SQL completed in the same disposable environment.".into()]))
 }
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 fn write_report(o: &Opt, r: Report) -> Result<(), String> {
+    let rollback_failed = !r.rollback;
     fs::create_dir_all(&o.output).map_err(|e| e.to_string())?;
     let dir = PathBuf::from(&o.output);
     let notes = r
@@ -443,18 +509,25 @@ fn write_report(o: &Opt, r: Report) -> Result<(), String> {
         .collect::<Vec<_>>()
         .join(", ");
     let json=format!("{{\n  \"engine\": \"{}\",\n  \"migration\": \"{}\",\n  \"duration_ms\": {},\n  \"max_lock_wait_ms\": {},\n  \"table_bytes_before\": {},\n  \"table_bytes_after\": {},\n  \"rollback_checked\": {},\n  \"verdict\": \"{}\",\n  \"notes\": [{}]\n}}\n",escape(&r.engine),escape(&r.migration),r.duration,r.during_lock,r.before,r.after,r.rollback,r.verdict,notes);
-    fs::write(dir.join("report.json"), json).map_err(|e| e.to_string())?;
+    fs::write(dir.join("report.json"), &json).map_err(|e| e.to_string())?;
     let mut md=format!("# Migration go/no-go card\n\n**Verdict: {}**\n\n- Engine: {}\n- Migration: `{}`\n- Statement time: {} ms\n- Maximum observed lock wait: {} ms\n- Table bytes: {} → {}\n- Rollback checked: {}\n\n## Operator notes\n\n",r.verdict,r.engine,r.migration,r.duration,r.during_lock,r.before,r.after,r.rollback);
     for n in r.notes {
         md.push_str(&format!("- {n}\n"))
     }
     fs::write(dir.join("runbook.md"), md).map_err(|e| e.to_string())?;
-    println!("wrote {}/report.json", o.output);
-    println!("wrote {}/runbook.md", o.output);
+    if o.json {
+        println!("{}", json.trim());
+    } else {
+        println!("wrote {}/report.json", o.output);
+        println!("wrote {}/runbook.md", o.output);
+    }
+    if rollback_failed {
+        return Err("rollback failed; wrote a NO-GO card. Fix or replace the rollback SQL before proceeding".into());
+    }
     Ok(())
 }
 fn usage() {
-    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--output DIR] [--dry-run]\n  mlr rehearse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--output DIR]\n  mlr guard DATABASE_URL\n\nThe CLI never accepts remote targets. It creates and removes its own disposable container.")
+    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--output DIR] [--json]\n  mlr guard DATABASE_URL\n\nA failed rollback writes NO-GO and returns an actionable report. The CLI never accepts remote targets. It creates and removes its own disposable container.")
 }
 #[cfg(test)]
 mod tests {
@@ -469,6 +542,7 @@ mod tests {
         let d = env::temp_dir().join("mlr-test-sample");
         let _ = fs::remove_dir_all(&d);
         sample(&Opt {
+            engine: "postgres".into(),
             output: d.to_string_lossy().into(),
             migration: "sample.sql".into(),
             ..Default::default()
@@ -477,5 +551,44 @@ mod tests {
         assert!(d.join("report.json").is_file());
         assert!(d.join("runbook.md").is_file());
         let _ = fs::remove_dir_all(d);
+    }
+    fn failed_rollback_writes_no_go_and_returns_actionable_error(engine: &str) {
+        let d = env::temp_dir().join(format!("mlr-test-failed-rollback-{engine}"));
+        let _ = fs::remove_dir_all(&d);
+        let opt = Opt {
+            output: d.to_string_lossy().into(),
+            ..Default::default()
+        };
+        let report = rehearsal_report(
+            engine,
+            &opt,
+            Measurements {
+                duration: 1,
+                during_lock: 0,
+                before: 1,
+                after: 1,
+            },
+            false,
+            vec![],
+        );
+        let error = write_report(&opt, report).unwrap_err();
+        assert!(error.contains("rollback failed"));
+        let json = fs::read_to_string(d.join("report.json")).unwrap();
+        let runbook = fs::read_to_string(d.join("runbook.md")).unwrap();
+        assert!(json.contains("\"verdict\": \"NO-GO\""));
+        assert!(runbook.contains("**Verdict: NO-GO**"));
+        let _ = fs::remove_dir_all(d);
+    }
+    #[test]
+    fn failed_postgres_rollback_is_no_go() {
+        failed_rollback_writes_no_go_and_returns_actionable_error("postgres");
+    }
+    #[test]
+    fn failed_clickhouse_rollback_is_no_go() {
+        failed_rollback_writes_no_go_and_returns_actionable_error("clickhouse");
+    }
+    #[test]
+    fn rejects_unsupported_engine_before_report_generation() {
+        assert!(validate_engine("mysql").is_err());
     }
 }

@@ -2,7 +2,7 @@
 
 Rehearse a database migration before production.
 
-Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a concrete go/no-go card before a schema change. It starts a fresh Docker database, loads a sanitized fixture, applies supplied SQL, checks optional rollback SQL, and writes a report. It never accepts a remote database URL.
+Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a concrete go/no-go card before a schema change. It starts a fresh Docker database, loads a sanitized fixture, applies supplied SQL, checks optional rollback SQL, and writes a report. A failed rollback is always **NO-GO**. It never accepts a remote database URL.
 
 The static documentation site lives at `https://migration-lock-rehearsal.sociobot.in`.
 
@@ -36,14 +36,16 @@ cargo run -- rehearse \
 ```
 
 Read `./rehearsal-card/report.json` in automation and `./rehearsal-card/runbook.md` during the change review.
+Without a rollback file, or when that file fails, the card is **NO-GO** and the CLI exits non-zero after writing both files.
 
 Use `--engine clickhouse` with a ClickHouse fixture and migration. Results are estimates from a new, disposable environment. Use a production-shaped sanitized fixture before relying on timing or size movement. This release does not connect to, copy from, or run against production databases.
 
 ## Commands
 
 ```text
-mlr demo [--output DIR] [--dry-run]
-mlr rehearse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--output DIR]
+mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json]
+mlr demo --output DIR --reset
+mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--output DIR] [--json]
 mlr guard DATABASE_URL
 ```
 
@@ -62,11 +64,9 @@ cargo build --release
 
 The exact static deploy command is `npm run build:site`; it places `index.html` at `dist/site/index.html`. `npm test` runs Rust tests and the claim tests. `cargo package` prepares the CLI package for registry review; do not publish it from this repository.
 
-## Privacy and license
+## Privacy
 
-The site has no analytics and loads no third-party scripts or fonts. The CLI stays local to your chosen output folder and its disposable Docker database. See the site’s `/privacy` and `/terms` pages for full details.
-
-A $29 one-time operator license is offered through Sociobot, the merchant of record. It does not gate report export or safety behavior.
+The site has no analytics and loads no third-party scripts or fonts. The CLI stays local to your chosen output folder and its disposable Docker database. See the site’s `/privacy` and `/terms` pages for full details. There is no checkout or account.
 
 ## License
 

@@ -6,8 +6,8 @@
 | For database maintainers who need lock, rewrite, and rollback estimates before a release. | 13 | — |
 | See the bundled go/no-go card. | 6 | — |
 | Local Docker only | 3 | — |
-| Sanitized sample included | 3 | — |
-| One-time operator license | 3 | — |
+| Bundled invented sample | 3 | — |
+| Reports use your output folder | 5 | — |
 | Measure the risk before the window opens. | 7 | — |
 | Use sanitized, production-shaped data. | 4 | — |
 | Add the migration, rollback, and optional workload. | 7 | — |
@@ -20,9 +20,6 @@
 | It uses only the included fixture and writes a runbook. | 10 | — |
 | Docker must be running. | 4 | — |
 | The CLI creates a container and removes it after the run. | 11 | — |
-| $29 once. | 2 | — |
-| The operator license includes future engine checks. | 7 | — |
-| Reports, exports, and safety checks stay free. | 7 | — |
 
 No sentence exceeds 22 words. No banned terms appear.
 

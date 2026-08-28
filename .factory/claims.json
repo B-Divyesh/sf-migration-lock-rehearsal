@@ -21,10 +21,31 @@
     "sandbox": "build the static site and inspect emitted HTML, CSS, and JavaScript for http URLs"
   },
   {
-    "id": "license-checkout",
-    "claim": "A $29 one-time operator license has a Sociobot checkout link.",
-    "where": "landing paid tier",
-    "test": "npm test -- --test-name-pattern @claim:license-checkout",
-    "sandbox": "build the static site and assert the official checkout URL and listed price"
+    "id": "supported-engines",
+    "claim": "Rehearses Postgres and ClickHouse migrations.",
+    "where": "README",
+    "test": "npm test -- --test-name-pattern @claim:supported-engines",
+    "sandbox": "fresh temporary directory; run dry-run cards for Postgres and ClickHouse, then reject MySQL"
+  },
+  {
+    "id": "demo-reset",
+    "claim": "The CLI demo reset removes its named demo folder.",
+    "where": ".factory/demo.md",
+    "test": "npm test -- --test-name-pattern @claim:demo-reset",
+    "sandbox": "fresh temporary directory; create a dry-run card, reset the explicit output directory, and assert it is gone"
+  },
+  {
+    "id": "invented-sample",
+    "claim": "The bundled demo uses invented customer records.",
+    "where": "landing facts, README, demo page",
+    "test": "npm test -- --test-name-pattern @claim:invented-sample",
+    "sandbox": "read the shipped fixture and assert the documented invented records and no connection URL"
+  },
+  {
+    "id": "chosen-output",
+    "claim": "The CLI writes reports to the output folder you choose.",
+    "where": "landing facts, privacy page, README",
+    "test": "npm test -- --test-name-pattern @claim:chosen-output",
+    "sandbox": "fresh temporary directory; run dry-run with an explicit output directory and assert both report files occur there"
   }
 ]

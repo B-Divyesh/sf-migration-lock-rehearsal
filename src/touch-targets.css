@@ -1,0 +1,22 @@
+/* Navigation remains compact visually while every link has a 44px hit area. */
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+nav {
+  gap: 8px;
+}
+
+nav a,
+footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: 8px;
+}
+
+@media (max-width: 650px) {
+  .site-header nav { gap: 8px; }
+}
