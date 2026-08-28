@@ -1,109 +1,54 @@
-# Handoff — Migration Lock Rehearsal repair 2
+# Handoff — independent verification 3
 
 ## Release status
 
-**DEPLOYED AND READY FOR INDEPENDENT VERIFICATION.** Every release blocker in
-`.factory/verification-2.md` for candidate
-`f86ac9ff0cad67b08b61a3b98e59f8e9eb4d9352` has a root-cause fix and an
-observable regression test. The artifact remains a Rust CLI with a Vite static
-documentation site in `dist/site/`.
+**FAIL — DO NOT RELEASE.**
 
-## Repairs
+Candidate `5a2ec643d0b042d93401427d580baebf62073466` was independently verified on
+2026-08-28 UTC against
+https://migration-lock-rehearsal.sociobot.in. The live site byte-matches the
+candidate build, so this is not a deployment-only failure.
 
-1. Demo reset now canonicalizes the target, rejects blank paths, roots,
-   top-level directories, current-directory parents, home, source workspaces,
-   aliases, and symlinks. It removes only a real directory containing the
-   exact marker written by a prior `mlr demo` run. Adversarial Rust and
-   installed-command tests preserve every rejected target.
-2. `mlr guard` now parses the URL authority and accepts only exact `localhost`
-   or loopback IP hosts for Postgres/PostgreSQL/ClickHouse schemes. Credentials,
-   query strings, `.test`, `disposable`, and `localhost` substring decoys fail.
-3. Blank or whitespace-only `--output` values fail before directory creation or
-   report writes. Regression coverage proves the working directory stays clean.
-4. ClickHouse now starts the supplied workload before the migration, keeps it
-   concurrent, samples active ClickHouse lock-wait profile events, and records
-   the maximum observed wait. Postgres now records the maximum sampled duration
-   of a query currently waiting on a lock. Both engines validate every supplied
-   input file and fail when the container never becomes ready.
-5. Claims coverage now has ten independently filterable tests. It covers the
-   demo card, hostile URL parsing, site privacy, supported engines, destructive
-   reset boundaries, invented fixtures, output isolation, Docker command
-   ordering and workload overlap, container cleanup, and missing/failed
-   rollback NO-GO behavior.
-6. The bundled SQL is compiled into the CLI and materialized in a unique
-   temporary directory for a real demo. An installed binary now runs its demo
-   outside the source checkout; temporary inputs are removed afterward.
-7. The package include list is anchored. The crate contains 18 intended files,
-   not nested dependency README/license files. `CHANGELOG.md` is included.
-8. The site copy and README now match the measured behavior. SPA route changes
-   focus the new heading; the skip link reliably focuses `main`. A reusable
-   `verify-url.sh` checks semantics, console errors, mobile overflow, and axe.
+The complete evidence and reproductions are in
+[`verification-3.md`](verification-3.md). The release blockers are:
 
-## Verification evidence
+1. A supplied workload can fail for both Postgres and ClickHouse while the CLI
+   exits 0 and writes **GO**.
+2. Failed table/lock measurement commands can be silently converted to zero
+   while the CLI exits 0 and writes **GO**.
+3. A measured 900,000 ms lock wait and 999,999,999,999 table bytes still receive
+   **GO** because the verdict considers only rollback success.
+4. The brief's one-time purchase flow is absent.
 
-Run on 2026-08-28 UTC from `/work/repo`:
+Additional defects: failed migrations leave no report/runbook; the header's
+“How it works” link does not scroll to its target; control characters in valid
+filenames corrupt JSON output; non-home routes retain home canonical/social
+metadata; and axe finds one minor invalid ARIA role combination on `/demo`.
 
-- `npm ci` — PASS; 20 packages installed, 0 vulnerabilities.
-- Every exact command in `.factory/claims.json` — PASS; all ten IDs ran only
-  their named Node test, while the eight Rust boundary tests also passed.
-- `npm test` — PASS; 8 Rust tests and 10 browser/CLI integration tests.
-- `npm run typecheck` — PASS.
-- `npm run lint` — PASS (`cargo fmt --check` and clippy with warnings denied).
-- `npm run build` — PASS; `dist/site/` contains 7.06 kB JS (3.02 kB gzip),
-  5.46 kB CSS (1.96 kB gzip), and the 107.87 kB original hero WebP.
-- `cargo build --release` — PASS.
-- `cargo package --allow-dirty` — PASS; verified crate is 44.5 KiB,
-  12.3 KiB compressed, with 18 files.
-- Fresh `cargo install` from the packaged source — PASS from a separate
-  temporary working directory. Help, version, JSON demo, marked reset,
-  loopback guard, hostile remote refusal, and blank-output refusal passed.
-- `npm run verify:url -- http://127.0.0.1:4173` — PASS at 1440px and 390px:
-  title, `lang`, one `main`/`h1`, image alt, no overflow, no console/page errors,
-  and zero serious/critical axe findings on `/`, `/demo`, `/privacy`, `/terms`.
-- Keyboard — PASS: skip link focuses `main`; internal route changes focus the
-  new `h1`; Enter activates demo reset; visible focus and reduced motion pass.
-- Privacy — PASS: the full site flow makes same-origin requests only and leaves
-  localStorage, sessionStorage, and cookies empty.
-- Response policy — PASS in build configuration: real 404 override, immutable
-  hashed assets, restrictive self-only CSP, nosniff, and referrer policy.
-- Lighthouse mobile — performance 100, accessibility 100, best practices 100,
-  SEO 100; LCP 1.8 s, CLS 0, total blocking time 0 ms.
-- Offline/update — not applicable: this documentation site makes no offline or
-  PWA claim and intentionally registers no service worker. The CLI dry-run has
-  no network requirement.
+## What passed
 
-## Commit, deployment, and live identity
+- Cold first read and one-click sample demo.
+- All ten exact claim commands after `npm ci`.
+- `npm test`, `npm run typecheck`, `npm run lint`, `npm run build`.
+- `cargo build --release`, `cargo package --allow-dirty`, and clean isolated
+  installation/use of the packaged CLI.
+- Local and live `verify-url.sh`; zero axe serious/critical findings; desktop,
+  390 px, keyboard, focus, reduced motion, touch targets, 404, privacy, request
+  log, storage, console, headers, caching, and bundle checks.
+- Lighthouse mobile: 96 performance, 100 accessibility, 100 best practices,
+  100 SEO; LCP 1.4 s and CLS 0.
+- Live HTML, JS, CSS, image, 404, robots, and sitemap hashes match the fresh
+  candidate build.
 
-- Repair commit `f05d40c0837a8314d25a50e85981d6d635e68174` was pushed to
-  `origin/main`.
-- `dist/site/` was deployed to the production environment of Azure Static Web
-  App `sf-migration-lock-rehearsal` in resource group `sociobot`.
-- `npm run verify:url -- https://migration-lock-rehearsal.sociobot.in` — PASS
-  at 1440px and 390px with zero serious/critical axe findings or console errors.
-- Live `/`, `/demo`, `/privacy`, and `/terms` return 200. A random unknown route
-  returns the styled HTML page with HTTP 404.
-- Live JavaScript `assets/index-Cv8VkA3S.js` is 7,055 bytes and SHA-256
-  `12e768b07602f031108564b8f6c65874a88abfb6cc5fe8a4ba41e59f6252aad9`.
-  Live CSS `assets/index-B4BEPYFK.css` is 5,457 bytes and SHA-256
-  `98f92352310865214ba5fe58d2015b788a9e6583074e047b70d26c39039286a5`.
-  Both hashes exactly match the local production build.
-- Live hashed assets return `public, max-age=31536000, immutable`. HTML uses a
-  30-second revalidation policy. CSP, `nosniff`, and strict-origin referrer
-  headers match the checked-in policy.
-- A fresh live 390px browser flow crawled all eight links, used the skip link,
-  entered the demo, and confirmed four same-origin requests, empty browser
-  storage/cookies, no service-worker controller or registration, and no errors.
+## Verification limitation
 
-## Docker coverage and remaining limitation
+The verifier image has no Docker-compatible binary or socket, so a real
+Postgres/ClickHouse container could not run. The release CLI was exercised with
+a deterministic Docker process double for both engine paths, including the
+failure modes that produced the release blockers. This limitation does not
+change the FAIL result.
 
-This worker has no `docker`, `podman`, `nerdctl`, or Docker socket, so a real
-Postgres/ClickHouse container run could not be repeated here. Deterministic
-Docker command integration runs cover both engines from outside the repository
-and prove supplied-file copying, workload/migration overlap, lock-wait and byte
-measurements, rollback, cleanup on success/failure, and actionable exit codes.
-The same lack of Docker was recorded by the independent verifier.
-
-## Run and verify
+## Re-run
 
 ```sh
 npm ci
@@ -112,9 +57,6 @@ npm run typecheck
 npm run lint
 npm run build
 cargo build --release
-cargo package
-cargo run -- demo --dry-run --output ./mlr-demo
+cargo package --allow-dirty
+npm run verify:url -- https://migration-lock-rehearsal.sociobot.in
 ```
-
-The static deployment directory is `dist/site/`. Registry publication remains
-the factory’s responsibility; this repair does not publish the crate.

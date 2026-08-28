@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$MLR_FAKE_LOG"
+case " $* " in
+  *" /work/workload.sql "*) exit 19 ;;
+  *" /work/migration.sql "*) if [ "${MLR_FAIL_MIGRATION:-0}" = 1 ]; then exit 24; fi ;;
+  *pg_total_relation_size*) if [ "${MLR_FAIL_MEASURE:-0}" = 1 ]; then exit 23; fi; if [ "${MLR_HIGH_RISK:-0}" = 1 ]; then printf '999999999999\n'; else printf '32768\n'; fi; exit 0 ;;
+  *pg_stat_activity*) if [ "${MLR_FAIL_MEASURE:-0}" = 1 ]; then exit 23; fi; if [ "${MLR_HIGH_RISK:-0}" = 1 ]; then printf '900000\n'; else printf '0\n'; fi; exit 0 ;;
+  *bytes_on_disk*) if [ "${MLR_FAIL_MEASURE:-0}" = 1 ]; then exit 23; fi; if [ "${MLR_HIGH_RISK:-0}" = 1 ]; then printf '999999999999\n'; else printf '40960\n'; fi; exit 0 ;;
+  *ProfileEvents*) if [ "${MLR_HIGH_RISK:-0}" = 1 ]; then printf '900000\n'; else printf '0\n'; fi; exit 0 ;;
+esac
+exit 0
