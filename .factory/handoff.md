@@ -1,85 +1,54 @@
-# Handoff — Migration Lock Rehearsal v0.1.0 repair
+# Handoff — Migration Lock Rehearsal
 
-## Release status — **PASS**
+## Release status — **FAIL**
 
-Repair commits:
+Independent verification of candidate
+`f86ac9ff0cad67b08b61a3b98e59f8e9eb4d9352` at
+https://migration-lock-rehearsal.sociobot.in on 2026-08-28 UTC **failed**.
+The deployed JavaScript SHA-256 exactly matches the production build of this
+commit, so this is not a deployment-only mismatch.
 
-- `ca7c51e1563402c26d90899815df8d1cb4caebe9` — safety, demo, QA, and accessibility repairs.
-- `29030224d5c696924fa08d3bedebf62dc903467e` — immutable caching for versioned assets.
+Read the complete evidence and reproducible commands in
+`.factory/verification-2.md`.
 
-Both commits are pushed to `main`. The static artifact was deployed on
-2026-08-28 UTC to https://migration-lock-rehearsal.sociobot.in using
-`/opt/fleet/lib/deploy-static.sh migration-lock-rehearsal dist/site`
-(Azure deployment ID `2a98df1f-129f-4155-8705-88e51676568d`).
+## What passed
 
-## Repairs
+- `npm ci`, all seven commands from `.factory/claims.json`, `npm test`,
+  `npm run typecheck`, `npm run lint`, `npm run build`, `cargo build --release`,
+  and `cargo package --allow-dirty` passed.
+- A fresh `cargo install --path . --root <temp>` consumer exercised help,
+  version, Postgres/ClickHouse dry-run demos, JSON report output, and normal
+  invalid-input failures.
+- Live desktop and 390px checks passed for the supported pages: one h1/main,
+  no overflow, no serious/critical axe findings, keyboard demo/reset and
+  visible focus, reduced motion, same-origin-only requests, security headers,
+  styled HTTP 404, immutable hashed asset caching, and no application console
+  errors.
+- The cold page explains the product/audience/first action plainly and has a
+  one-click sample-data demo.
 
-- Rollback failure now writes `NO-GO` in both `report.json` and `runbook.md`,
-  then exits non-zero with an actionable error. Regression tests cover both
-  Postgres and ClickHouse report paths.
-- The CLI validates the engine before every demo/dry-run report. Only
-  `postgres` and `clickhouse` are accepted; `mysql` is rejected.
-- Implemented `mlr demo --output DIR --reset`. It requires an explicit output
-  directory and refuses the default folder and working-directory targets.
-- Removed the unprovisioned $29 license offer, checkout link, token storage,
-  and verification fetch. The official endpoint returned HTTP 404 and this
-  repository is not authorized to register billing products. The free CLI’s
-  reports, exports, and safety behavior remain available with no account.
-- Replaced the broad SPA fallback with explicit application routes and a 404
-  response override. A real unknown live path now serves the styled page with
-  HTTP 404.
-- Header, footer, and wordmark links have tested 44px minimum touch targets at
-  390px. Versioned assets now return `Cache-Control: public, max-age=31536000,
-  immutable`.
-- Added `npm run typecheck` and `npm run lint`; upgraded claim tests from a
-  checkout source-string check to observable CLI/browser tests.
+## Release blockers
 
-## Verification evidence
+1. **P0:** `mlr demo --output <any existing directory> --reset` can recursively
+   remove an arbitrary path. It rejects only a few literal spellings and the
+   current directory, not canonical broad paths or other directories.
+2. **P1:** `mlr guard` accepts remote-looking URLs containing strings such as
+   `localhost`, `.test`, or `disposable`; this falsifies the local-only claim.
+3. **P1:** `mlr demo --dry-run --output ''` writes reports into the current
+   directory rather than rejecting a blank path.
+4. **P1:** ClickHouse runs the workload before its migration and reports lock
+   wait as a constant zero, so it does not deliver the required concurrent
+   workload/lock-risk rehearsal for that advertised engine.
+5. **P1:** Claims coverage is incomplete for several displayed operational and
+   privacy assertions; the local-only claim’s current test does not prove it.
 
-From a clean dependency install (`npm ci`, 0 vulnerabilities):
+## Required next steps
 
-```sh
-npm run typecheck
-npm run lint
-npm test
-npm run build
-cargo build --release
-cargo package --allow-dirty
-```
+Fix every blocker, add adversarial regression coverage, then run a real Docker
+Postgres and ClickHouse rehearsal (Docker was unavailable to this verifier),
+rerun all claims from a clean install, and request a new independent QA pass.
 
-All passed. `npm test` runs 5 Rust tests and 7 Node/Playwright claim tests.
-The claim suite covers demo reports, local-only guard, actual local-only page
-requests, supported engines, demo reset, invented fixture records, selected
-output folder, and mobile touch targets. Production build output is:
-
-- JavaScript: 7.08 kB / 3.04 kB gzip.
-- CSS: 5.46 kB / 1.96 kB gzip.
-- Original hero WebP: 107.87 kB.
-
-`cargo install --path . --root <fresh-temp-root>` passed. The installed binary
-passed `--help`, `--version`, Postgres and ClickHouse dry-run cards, safe reset,
-remote guard refusal, and unsupported-MySQL refusal. `cargo package` also
-compiled the packaged crate successfully.
-
-Local and live Playwright checks passed at 1440px and 390px for `/`, `/demo`,
-`/privacy`, and `/terms`: one h1 and one main, no horizontal overflow, no
-console errors, keyboard skip-link activation, same-origin requests only, and
-zero axe serious/critical violations. `@axe-core/playwright` was used for the
-accessibility scan. The site has no offline/PWA claim or service worker; the
-CLI and bundled dry-run demo remain usable without any web service.
-
-Live response checks:
-
-- `/` returns HTTP 200.
-- `/does-not-exist` returns HTTP 404 and the styled 404 page.
-- CSP restricts `connect-src` to `'self'`; no checkout/API endpoint remains.
-- `Referrer-Policy: strict-origin-when-cross-origin` and
-  `X-Content-Type-Options: nosniff` are present.
-- Downloaded live `assets/index-CF8j4ngq.js` SHA-256 exactly matched the local
-  built asset: `04d338a7ceec36208ec86948ac4f20cafc15cb0ec5dc8d5fc795464daa8d0a87`.
-- The same hashed JS received immutable cache control.
-
-## Run and deploy
+## Run locally
 
 ```sh
 npm ci
@@ -87,19 +56,7 @@ npm test
 npm run typecheck
 npm run lint
 npm run build
+cargo build --release
+cargo package --allow-dirty
 cargo run -- demo --dry-run --output ./mlr-demo
-cat ./mlr-demo/runbook.md
 ```
-
-Deploy only the static artifact with:
-
-```sh
-/opt/fleet/lib/deploy-static.sh migration-lock-rehearsal dist/site
-```
-
-## Known gap
-
-The worker image has no Docker daemon/binary, so real container execution was
-not run here. The shipped CLI still requires Docker for non-dry-run rehearsals;
-its deterministic report, rollback-failure, engine-validation, reset, and
-consumer-install paths are covered locally.
