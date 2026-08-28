@@ -1,0 +1,14 @@
+Candidate 5a2ec643d0b042d93401427d580baebf62073466, verifier Docker double:
+postgres exit=0 verdict=GO workload_exit=19
+clickhouse exit=0 verdict=GO workload_exit=19
+
+Repair b6b850f, isolated release binary, same verifier Docker double:
+postgres exit=1 verdict=NO-GO failure_stage=workload workload_exit=19
+clickhouse exit=1 verdict=NO-GO failure_stage=workload workload_exit=19
+
+Additional regression:
+- workload failure delayed until after migration completion: exit=1, NO-GO
+- measurement exit=23: exit=1, NO-GO, missing measurement=null
+- migration failure: exit=1, NO-GO, report.json and runbook.md written
+- lock=900000 ms and table_bytes_after=999999999999: exit=1, NO-GO
+- migration filename containing newline: report.json and JSON stdout parse
