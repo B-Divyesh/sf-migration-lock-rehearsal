@@ -1,33 +1,56 @@
-# Handoff — polish 1
+# Handoff — independent verification 6
 
-## Result
+## Result: PASS
 
-Released repair commit: `ddc1ffec48dc60fc17bba7f4b57416348d57e078` (plus documentation evidence in the following commit).
+Candidate `df61c11fedb5abd73fced60521c3798edbc8fe8c` is accepted for
+`https://migration-lock-rehearsal.sociobot.in`. Its product files are unchanged
+from the deployed repair and a fresh build matched the live HTML, JS, CSS, and
+hero asset byte-for-byte.
 
-All 18 findings in `.factory/review-1.md` are addressed. The static site was deployed through `/opt/fleet/lib/deploy-static.sh` to `https://migration-lock-rehearsal.sociobot.in` (Azure deployment `50659fcb-f285-44c2-b4a7-35bb334fbf8e`) and cold-checked after deployment.
+## What was verified
 
-## Verification
+- Every test listed in `.factory/claims.json` ran from this clean checkout:
+  15 passed; the two Docker-only claims skipped exactly as their sandbox
+  permits because Docker is not installed. No claim failed.
+- `npm test`, typecheck, lint, exact production build, Rust release build,
+  Cargo package, and package dry-run passed.
+- A newly unpacked/installed `mlr` package produced Postgres and ClickHouse
+  dry-run reports, correctly rejected remote-looking URLs and unsupported
+  engines, and wrote a NO-GO report/runbook with exit 1 for an exceeded limit.
+- The cold live page plainly says what it does, who it is for, and offers
+  **Try it with sample data**. Demo reset is keyboard-operable and stores no
+  browser data.
+- Live route, privacy, request-log, headers, desktop/390px, keyboard,
+  reduced-motion, cache, budget, and axe checks passed. The optional license
+  endpoint allowed 30 sequential calls and returned 429 with `Retry-After: 3`
+  on request 31.
 
-- Fresh final clone: `/tmp/mlr-clean-ddc1ffe`; `npm ci && npm test` exited `0`. 21 tests passed; two real-container tests were intentionally skipped because this disposable worker lacks kernel namespace permissions. The exact output is `clean-test.log` in that temporary clone.
-- Real-container gate: `.github/workflows/docker-claims.yml` runs `@claim:docker-rehearsal` and `@claim:container-cleanup` with `MLR_REQUIRE_DOCKER=1` on GitHub's Ubuntu Docker runner. The tests run bundled Postgres 16 and ClickHouse 24.8 samples and now exercise both success and SQL-failure cleanup.
-- Local gates passed: `npm run typecheck`, `npm run lint`, `npm run build`, `cargo build --release`, `cargo package --allow-dirty --no-verify`, and `npm pack --dry-run`.
-- Live checks passed: `npm run verify:url -- https://migration-lock-rehearsal.sociobot.in`; zero serious/critical axe findings, no console errors, correct title/lang/main/alt, and no 390px overflow.
-- Cold live browser flow passed: `/?demo=1` showed the persistent banner; Reset demo restarted the terminal at `$ mlr demo --dry-run --output ./mlr-demo` with empty storage; the designed unknown-route page had the expected title. Screenshots: `.factory/evidence/polish-1/live-mobile-home.png`, `live-mobile-demo-reset.png`, and `live-mobile-404.png`.
-- Build budget: initial JS `13.22 kB` raw / `5.10 kB` gzip; CSS `6.51 kB` raw / `2.19 kB` gzip; original hero art `107.87 kB`.
+See `.factory/verification-6.md` for exact commands and evidence.
 
-## Run and deploy
+## How to run and verify
 
 ```sh
 npm ci
 npm test
+npm run typecheck
 npm run lint
 npm run build
 cargo build --release
-/opt/fleet/lib/deploy-static.sh migration-lock-rehearsal dist/site
+cargo package
 ```
 
-The CLI is ready for registry review with `cargo package`; do not publish it from this repository.
+Run the offline shipped sample with:
 
-## Known gaps
+```sh
+cargo run -- demo --dry-run --output ./mlr-demo
+```
 
-No known product gaps. This worker cannot run a nested container image because its kernel denies `unshare`; the real Docker claims are fail-required on the included GitHub Actions Ubuntu runner rather than treated as passing locally.
+Use `mlr rehearse` with a sanitized fixture and Docker for a real disposable
+Postgres or ClickHouse rehearsal. Do not publish from this repository.
+
+## Known limitation
+
+This verifier container has no Docker binary, so it could not independently
+execute the real Postgres/ClickHouse container claims. They are explicitly
+fail-required in `.github/workflows/docker-claims.yml` on an Ubuntu Docker
+runner; the local skip is recorded in the verification report.
