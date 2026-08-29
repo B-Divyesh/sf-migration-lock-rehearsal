@@ -1,0 +1,11 @@
+{
+  "command": "mlr demo --dry-run --output ./mlr-demo",
+  "transcript": [
+    "$ mlr demo --dry-run --output ./mlr-demo",
+    "wrote ./mlr-demo/report.json",
+    "wrote ./mlr-demo/runbook.md",
+    "$ cat ./mlr-demo/report.json",
+    "engine: postgres | statement time: 184 ms | lock wait: 0 ms",
+    "table growth: 8,192 bytes | rollback: checked | verdict: GO"
+  ]
+}

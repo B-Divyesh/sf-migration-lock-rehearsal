@@ -1,0 +1,22 @@
+name: Docker claims
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  real-containers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      MLR_REQUIRE_DOCKER: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm test -- --test-name-pattern '@claim:(docker-rehearsal|container-cleanup)'

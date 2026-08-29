@@ -35,6 +35,20 @@
     "sandbox": "temporary paths only; remove one marked demo, then prove unmarked, workspace, home, current-directory and symlink targets survive"
   },
   {
+    "id": "browser-demo-reset",
+    "claim": "Opening ?demo=1 starts an isolated sample recording, and Reset demo restarts it without browser storage.",
+    "where": "landing demo action and demo page",
+    "test": "npm test -- --test-name-pattern @claim:browser-demo-reset",
+    "sandbox": "fresh browser context; open ?demo=1, record the first displayed terminal line, wait for another line, click Reset demo, and assert the first line returns with empty storage"
+  },
+  {
+    "id": "demo-recording",
+    "claim": "The browser sample terminal is recorded from the bundled release CLI dry-run.",
+    "where": "demo recording caption, .factory/demo.md",
+    "test": "npm test -- --test-name-pattern @claim:demo-recording",
+    "sandbox": "build the release CLI; execute its dry-run into a temporary output folder and assert the checked-in recording names the same command and report files"
+  },
+  {
     "id": "invented-sample",
     "claim": "The bundled Postgres and ClickHouse demos use invented customer records with no connection URL.",
     "where": "landing facts, README, demo page",
@@ -53,14 +67,14 @@
     "claim": "A Docker rehearsal loads supplied SQL, overlaps the workload with the migration, and records time, lock waits, table bytes, and rollback status.",
     "where": "landing how-it-works and install sections, README",
     "test": "npm test -- --test-name-pattern @claim:docker-rehearsal",
-    "sandbox": "deterministic Docker command double for both engines; assert command ordering and overlap plus measured report fields"
+    "sandbox": "GitHub Actions Ubuntu runner with Docker; run bundled Postgres 16 and ClickHouse 24.8 samples, then assert measured report fields and no mlr containers remain. Local machines without Docker mark this integration test skipped."
   },
   {
     "id": "container-cleanup",
     "claim": "The CLI removes its disposable Docker container after a successful or failed rehearsal.",
     "where": "landing install section, README, CLI help",
     "test": "npm test -- --test-name-pattern @claim:container-cleanup",
-    "sandbox": "deterministic Docker command double; assert docker rm -f after both a successful run and a failed migration"
+    "sandbox": "GitHub Actions Ubuntu runner with Docker; run bundled samples and assert no mlr container remains after each completed rehearsal. Local machines without Docker mark this integration test skipped."
   },
   {
     "id": "rollback-no-go",
@@ -78,10 +92,10 @@
   },
   {
     "id": "threshold-verdict",
-    "claim": "Statement time, lock wait, and table growth limits determine the verdict.",
-    "where": "landing demo card, README, CLI help",
+    "claim": "The default limits are 30,000 ms statement time, 1,000 ms lock wait, and 104,857,600 bytes table growth. Default and configured limits appear in the JSON report and runbook, and determine the verdict.",
+    "where": "landing demo report, README, CLI help",
     "test": "npm test -- --test-name-pattern @claim:threshold-verdict",
-    "sandbox": "deterministic Docker measurements for both engines; set each limit below its measurement and assert non-zero NO-GO plus the configured limits in JSON and runbook"
+    "sandbox": "release CLI help and deterministic Docker measurements for both engines; assert all exact defaults, configured override values, JSON/runbook inclusion, and NO-GO verdicts"
   },
   {
     "id": "safe-json",
@@ -92,9 +106,16 @@
   },
   {
     "id": "paid-license",
-    "claim": "Sociobot checkout redirects to hosted Dodo checkout; a returned or pasted license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
+    "claim": "The hosted checkout shows a $29 one-time operator license. A valid returned or pasted license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
     "where": "landing paid tier, privacy, terms",
     "test": "npm test -- --test-name-pattern @claim:paid-license",
     "sandbox": "one live Sociobot checkout request with redirect following disabled plus a fresh browser context with a recorded verification response; assert HTTP 303 to checkout.dodopayments.com, URL token stripping, namespaced storage, daily cache, paid checklist, restore, and removal"
+  },
+  {
+    "id": "free-cli",
+    "claim": "Reports and safety checks do not require a license.",
+    "where": "landing paid section, README",
+    "test": "npm test -- --test-name-pattern @claim:free-cli",
+    "sandbox": "fresh temporary directory with no license variables, no browser storage, and network proxy set to closed loopback; run demo, guard, and rehearsal argument validation without any license request"
   }
 ]

@@ -2,20 +2,20 @@
 
 Rehearse a database migration before production.
 
-Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a concrete go/no-go card before a schema change. It starts a fresh Docker database, loads the fixture you provide, runs the migration under an optional workload, checks rollback SQL, and writes a measured report. Failed commands, failed rollback, and exceeded limits are always **NO-GO**. Its URL guard accepts exact loopback hosts only.
+Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a go/no-go report before a schema change. It starts a fresh Docker database and loads your fixture. It runs the migration with an optional workload. It checks rollback SQL and writes a measured report. Failed commands, failed rollback, and exceeded limits are always **NO-GO**. Its URL guard accepts exact loopback hosts only.
 
 The static documentation site lives at `https://migration-lock-rehearsal.sociobot.in`.
 
 ## Quick demo
 
-The bundled dry-run demo works locally without Docker or network access. It gives a usable sample card:
+The bundled dry-run demo works locally without Docker or network access. It writes a sample go/no-go report with measured results:
 
 ```sh
 cargo run -- demo --dry-run --output ./mlr-demo
 cat ./mlr-demo/runbook.md
 ```
 
-For the Docker-backed rehearsal, run:
+For the Docker-backed sample rehearsal, run:
 
 ```sh
 cargo run -- demo --output ./mlr-demo
@@ -23,7 +23,15 @@ cargo run -- demo --output ./mlr-demo
 
 The demo uses invented customer data in `examples/postgres/`. It writes only to the non-blank output folder you name. The Docker-backed command creates a disposable Postgres 16 container and removes it when the run ends.
 
-## Use your migration
+## Install and use your migration
+
+Install the CLI from this repository:
+
+```sh
+cargo install --git https://github.com/B-Divyesh/sf-migration-lock-rehearsal --locked
+```
+
+Then run your migration:
 
 Docker must be running. Provide a sanitized fixture, the migration SQL, and optionally its rollback SQL:
 
@@ -33,13 +41,13 @@ cargo run -- rehearse \
   --migration ./2026-flag.sql \
   --rollback ./2026-flag-down.sql \
   --workload ./read.sql \
-  --output ./rehearsal-card
+  --output ./rehearsal-report
 ```
 
-Read `./rehearsal-card/report.json` in automation and `./rehearsal-card/runbook.md` during the change review.
-When a workload, measurement, migration, or rollback command fails, the card is **NO-GO**. The CLI writes both files with the failed stage and recovery step, then exits non-zero. Missing measurements are `null`, never zero.
+Read `./rehearsal-report/report.json` in automation and `./rehearsal-report/runbook.md` during the change review.
+When a workload, measurement, migration, or rollback command fails, the report is **NO-GO**. The CLI writes both files with the failed stage and recovery step, then exits non-zero. Missing measurements are `null`, never zero.
 
-Use `--engine clickhouse` with a ClickHouse fixture and migration. Both engines run the workload while the migration executes and record statement time, observed lock waits, table bytes, table growth, and rollback status. Results are estimates from a new container. Use a production-shaped sanitized fixture before relying on them. The rehearsal command has no database URL option.
+Use `--engine clickhouse` with a ClickHouse fixture and migration. Both engines run the workload while the migration executes. They record statement time, lock waits, table bytes, table growth, and rollback status. Results are estimates from a new container. Use a production-shaped sanitized fixture before relying on them. The rehearsal command has no database URL option.
 
 The default release limits are 30,000 ms statement time, 1,000 ms lock wait, and 104,857,600 bytes table growth. Override them with `--max-statement-ms`, `--max-lock-wait-ms`, and `--max-table-growth-bytes`. Every configured limit appears in the JSON report and runbook. An exceeded limit writes **NO-GO** and exits non-zero.
 
@@ -75,9 +83,9 @@ Without a license action, the site makes only same-origin requests and stores no
 
 ## Operator license
 
-The optional operator license costs $29 once. It adds the browser-based operator review checklist. CLI reports and safety checks stay free.
+The optional operator license costs $29 once. It adds the browser-based operator review checklist. CLI reports and safety checks do not require a license.
 
-Purchase uses Sociobot’s hosted checkout. A returned or pasted token is stored under `sb_license:migration-lock-rehearsal`, sent only to `api.sociobot.in`, and verified at most once daily. Use **Remove saved license** to delete it. Sociobot and Dodo are the merchant of record, and refunds are handled there.
+Purchase uses Sociobot’s hosted checkout. A returned or pasted token is stored under `sb_license:migration-lock-rehearsal`, sent only to `api.sociobot.in`, and verified at most once daily. Use **Remove saved license** to delete it.
 
 ## License
 

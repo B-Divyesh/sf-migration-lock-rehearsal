@@ -480,7 +480,7 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     }
     validate_input_files(o)?;
     if Command::new("docker").arg("version").output().is_err() {
-        return Err("Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled card".into());
+        return Err("Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled report".into());
     }
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -689,7 +689,7 @@ fn rehearse(o: &Opt) -> Result<(), String> {
 fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
     validate_input_files(o)?;
     if Command::new("docker").arg("version").output().is_err() {
-        return Err("Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled card".into());
+        return Err("Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled report".into());
     }
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1231,7 +1231,7 @@ fn write_report(o: &Opt, r: Report) -> Result<(), String> {
     let show = |value: Option<u128>| value.map_or_else(|| "not measured".into(), |v| v.to_string());
     let show_bytes =
         |value: Option<u64>| value.map_or_else(|| "not measured".into(), |v| v.to_string());
-    let mut md=format!("# Migration go/no-go card\n\n**Verdict: {}**\n\n- Engine: {}\n- Migration: `{}`\n- Statement time: {} ms\n- Maximum observed lock wait: {} ms\n- Table bytes: {} → {}\n- Table growth: {} bytes\n- Rollback checked: {}\n\n## Decision limits\n\n- Statement time: at most {} ms\n- Lock wait: at most {} ms\n- Table growth: at most {} bytes\n\n## Decision reasons\n\n",r.verdict,markdown_inline(&r.engine),markdown_inline(&r.migration),show(r.duration_ms),show(r.max_lock_wait_ms),show_bytes(r.table_bytes_before),show_bytes(r.table_bytes_after),show_bytes(r.table_growth_bytes),r.rollback_checked,r.thresholds.max_statement_ms,r.thresholds.max_lock_wait_ms,r.thresholds.max_table_growth_bytes);
+    let mut md=format!("# Migration runbook\n\n**Verdict: {}**\n\n- Engine: {}\n- Migration: `{}`\n- Statement time: {} ms\n- Maximum observed lock wait: {} ms\n- Table bytes: {} → {}\n- Table growth: {} bytes\n- Rollback checked: {}\n\n## Decision limits\n\n- Statement time: at most {} ms\n- Lock wait: at most {} ms\n- Table growth: at most {} bytes\n\n## Decision reasons\n\n",r.verdict,markdown_inline(&r.engine),markdown_inline(&r.migration),show(r.duration_ms),show(r.max_lock_wait_ms),show_bytes(r.table_bytes_before),show_bytes(r.table_bytes_after),show_bytes(r.table_growth_bytes),r.rollback_checked,r.thresholds.max_statement_ms,r.thresholds.max_lock_wait_ms,r.thresholds.max_table_growth_bytes);
     for reason in &r.decision_reasons {
         md.push_str(&format!("- {}\n", markdown_inline(reason)));
     }
@@ -1260,7 +1260,7 @@ fn write_report(o: &Opt, r: Report) -> Result<(), String> {
                 .map_or("a release limit was exceeded", String::as_str)
         });
         return Err(format!(
-            "{reason}; wrote a NO-GO card. Fix the cause before proceeding"
+            "{reason}; wrote a NO-GO report. Fix the cause before proceeding"
         ));
     }
     Ok(())

@@ -119,6 +119,25 @@ test('@claim:demo-report bundled offline dry-run writes a go/no-go runbook', () 
   } finally { rmSync(parent, { recursive: true, force: true }) }
 })
 
+test('@claim:free-cli reports and safety checks run without a license', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'mlr-free-'))
+  try {
+    const env = {
+      ...process.env,
+      SB_LICENSE_MIGRATION_LOCK_REHEARSAL: '',
+      HTTP_PROXY: 'http://127.0.0.1:1',
+      HTTPS_PROXY: 'http://127.0.0.1:1',
+      ALL_PROXY: 'http://127.0.0.1:1',
+      NO_PROXY: '',
+    }
+    assertSuccess(runCli(['demo', '--dry-run', '--output', join(parent, 'report')], { cwd: parent, env }))
+    assertSuccess(runCli(['guard', 'postgres://ops@localhost/rehearsal'], { cwd: parent, env }))
+    const rehearsal = runCli(['rehearse', '--fixture', 'missing.sql', '--migration', 'missing.sql'], { cwd: parent, env })
+    assert.notEqual(rehearsal.status, 0)
+    assert.doesNotMatch(rehearsal.stderr, /license|checkout|sociobot/i)
+  } finally { rmSync(parent, { recursive: true, force: true }) }
+})
+
 test('@claim:local-only only exact loopback database hosts pass the guard', () => {
   const refused = [
     'postgres://ops@localhost.prod.example.com/app',
@@ -161,6 +180,44 @@ async function withSite(run) {
     }
   }
 }
+
+test('@claim:browser-demo-reset query demo starts isolated and Reset demo restarts the recording', async () => {
+  await withSite(async origin => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+      const page = await context.newPage()
+      await page.goto(origin + '/?demo=1', { waitUntil: 'networkidle' })
+      await page.getByText('Demo — sample data, nothing is saved', { exact: false }).waitFor()
+      const initial = await page.locator('#terminal-output').textContent()
+      assert.match(initial ?? '', /^\$ mlr demo --dry-run --output \.\/mlr-demo/)
+      await page.waitForTimeout(550)
+      assert.match((await page.locator('#terminal-output').textContent()) ?? '', /report\.json/)
+      await page.getByRole('button', { name: 'Reset demo' }).click()
+      await page.getByText('Sample recording restarted.', { exact: true }).waitFor()
+      assert.equal((await page.locator('#terminal-output').textContent())?.trim(), '$ mlr demo --dry-run --output ./mlr-demo')
+      assert.deepEqual(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length, cookies: document.cookie })), { local: 0, session: 0, cookies: '' })
+      await context.close()
+    } finally { await browser.close() }
+  })
+})
+
+test('@claim:demo-recording browser recording names output from the release CLI dry-run', () => {
+  execFileSync('cargo', ['build', '--release', '--quiet'], { cwd: root, stdio: 'pipe' })
+  const parent = mkdtempSync(join(tmpdir(), 'mlr-recording-'))
+  try {
+    const output = join(parent, 'mlr-demo')
+    const releaseCli = join(process.env.CARGO_TARGET_DIR ?? join(root, 'target'), 'release', 'mlr')
+    const result = spawnSync(releaseCli, ['demo', '--dry-run', '--output', output], { cwd: parent, encoding: 'utf8' })
+    assertSuccess(result)
+    const artifact = JSON.parse(readFileSync(join(root, 'public', 'demo-recording.json'), 'utf8'))
+    assert.equal(artifact.command, 'mlr demo --dry-run --output ./mlr-demo')
+    assert.ok(artifact.transcript.includes('wrote ./mlr-demo/report.json'))
+    assert.ok(artifact.transcript.includes('wrote ./mlr-demo/runbook.md'))
+    assert.ok(existsSync(join(output, 'report.json')))
+    assert.ok(existsSync(join(output, 'runbook.md')))
+  } finally { rmSync(parent, { recursive: true, force: true }) }
+})
 
 test('@claim:site-private static site stays same-origin and stores no visitor data', async () => {
   await withSite(async origin => {
@@ -213,10 +270,13 @@ test('@claim:site-private static site stays same-origin and stores no visitor da
       await page.getByRole('link', { name: 'Try it with sample data' }).click()
       await page.waitForFunction(() => document.activeElement?.tagName === 'H1')
       assert.equal(await page.evaluate(() => document.activeElement?.tagName), 'H1')
-      await page.goto(origin + '/demo')
+      await page.goto(origin + '/?demo=1')
+      await page.getByText('Demo — sample data, nothing is saved', { exact: false }).waitFor()
       await page.locator('#reset-demo').focus()
       await page.keyboard.press('Enter')
-      await page.getByRole('button', { name: 'Demo reset' }).waitFor()
+      await page.getByText('Sample recording restarted.', { exact: true }).waitFor()
+      const firstLineAfterReset = await page.locator('#terminal-output').textContent()
+      assert.match(firstLineAfterReset ?? '', /mlr demo --dry-run/)
       await page.emulateMedia({ reducedMotion: 'reduce' })
       const motion = await page.locator('.cursor').evaluate(node => getComputedStyle(node).animationDuration)
       assert.equal(motion, '1e-05s')
@@ -249,6 +309,11 @@ test('route metadata, section links, and ARIA remain valid at desktop and mobile
     for (const path of ['/demo', '/privacy', '/terms']) {
       assert.equal(policy.routes.find(route => route.route === path)?.rewrite, `${path}/index.html`)
     }
+    const notFound = await (await fetch(origin + '/404.html')).text()
+    assert.match(notFound, /rel="canonical" href="https:\/\/migration-lock-rehearsal\.sociobot\.in\/404"/)
+    assert.match(notFound, /property="og:url" content="https:\/\/migration-lock-rehearsal\.sociobot\.in\/404"/)
+    assert.match(notFound, /rel="apple-touch-icon" href="\/apple-touch-icon\.png"/)
+    assert.equal(policy.responseOverrides['404'].rewrite, '/404.html')
 
     const browser = await chromium.launch({ headless: true })
     try {
@@ -297,8 +362,8 @@ test('390px navigation reflows at 200% text and first-screen facts name local, o
       await page.goto(origin + '/')
       assert.deepEqual(await page.locator('.facts li').allTextContents(), [
         'Local dry-run works offline',
-        'No tracking',
-        '$29 once; checklist optional',
+        'No tracking before a license action',
+        '$29 once; browser checklist',
       ])
       await context.close()
     } finally { await browser.close() }
@@ -313,6 +378,9 @@ test('@claim:paid-license live checkout redirects and returned or restored licen
   assert.equal(checkoutLocation.protocol, 'https:')
   assert.equal(checkoutLocation.hostname, 'checkout.dodopayments.com')
   assert.match(checkoutLocation.pathname, /^\/session\/cks_/)
+  const checkoutHtml = await (await fetch(checkoutLocation, { signal: AbortSignal.timeout(15_000) })).text()
+  assert.match(checkoutHtml, /\$29\.00/)
+  assert.match(checkoutHtml, /One-time unlock for Migration Lock Rehearsal/)
 
   await withSite(async origin => {
     const browser = await chromium.launch({ headless: true })
@@ -431,7 +499,7 @@ test('@claim:chosen-output reports stay in a named non-blank output directory', 
   } finally { rmSync(parent, { recursive: true, force: true }) }
 })
 
-test('@claim:docker-rehearsal supplied SQL and workload produce measured cards for both engines', () => {
+test('Docker command construction supplies SQL and workload for both engines', () => {
   for (const engine of ['postgres', 'clickhouse']) {
     const fake = makeFakeDocker()
     const output = join(fake.sandbox, `mlr-demo-${engine}`)
@@ -451,6 +519,54 @@ test('@claim:docker-rehearsal supplied SQL and workload produce measured cards f
       assert.equal(report.rollback_checked, true)
       assert.equal(report.verdict, 'GO')
     } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
+  }
+})
+
+function dockerReady() {
+  return spawnSync('docker', ['info'], { stdio: 'ignore' }).status === 0
+}
+
+test('@claim:docker-rehearsal bundled samples run in real Postgres and ClickHouse containers', { timeout: 180_000 }, t => {
+  if (!dockerReady()) {
+    if (process.env.MLR_REQUIRE_DOCKER === '1') assert.fail('Docker is required for this integration claim')
+    t.skip('Docker is unavailable; CI runs this claim on an Ubuntu Docker runner')
+    return
+  }
+  const parent = mkdtempSync(join(tmpdir(), 'mlr-docker-live-'))
+  try {
+    for (const engine of ['postgres', 'clickhouse']) {
+      const output = join(parent, engine)
+      const result = runCli(['demo', '--engine', engine, '--output', output], { cwd: parent })
+      assertSuccess(result)
+      const report = JSON.parse(readFileSync(join(output, 'report.json'), 'utf8'))
+      assert.equal(report.engine, engine)
+      assert.ok(report.duration_ms >= 0)
+      assert.ok(report.table_bytes_before > 0)
+      assert.ok(report.table_bytes_after > 0)
+      assert.equal(report.rollback_checked, true)
+      assert.equal(report.verdict, 'GO')
+      assert.match(readFileSync(join(output, 'runbook.md'), 'utf8'), /Verdict: GO/)
+    }
+  } finally {
+    const remaining = spawnSync('docker', ['ps', '-a', '--filter', 'name=mlr-', '--format', '{{.Names}}'], { encoding: 'utf8' })
+    assert.equal(remaining.stdout.trim(), '', `left disposable containers: ${remaining.stdout}`)
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('@claim:container-cleanup real Docker rehearsals leave no disposable container', { timeout: 120_000 }, t => {
+  if (!dockerReady()) {
+    if (process.env.MLR_REQUIRE_DOCKER === '1') assert.fail('Docker is required for this integration claim')
+    t.skip('Docker is unavailable; CI runs this claim on an Ubuntu Docker runner')
+    return
+  }
+  const parent = mkdtempSync(join(tmpdir(), 'mlr-cleanup-live-'))
+  try {
+    assertSuccess(runCli(['demo', '--output', join(parent, 'postgres')], { cwd: parent }))
+    const remaining = spawnSync('docker', ['ps', '-a', '--filter', 'name=mlr-', '--format', '{{.Names}}'], { encoding: 'utf8' })
+    assert.equal(remaining.stdout.trim(), '', `left disposable containers: ${remaining.stdout}`)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
   }
 })
 
@@ -484,6 +600,11 @@ test('@claim:failed-command-no-go failed workload, measurement, and migration co
 })
 
 test('@claim:threshold-verdict statement, lock, and table limits determine GO or NO-GO', () => {
+  const help = runCli(['--help'])
+  assertSuccess(help)
+  assert.match(help.stdout, /--max-statement-ms N\s+Default: 30000/)
+  assert.match(help.stdout, /--max-lock-wait-ms N\s+Default: 1000/)
+  assert.match(help.stdout, /--max-table-growth-bytes N\s+Default: 104857600/)
   for (const engine of ['postgres', 'clickhouse']) {
     for (const scenario of [
       { option: '--max-statement-ms', value: '1', reason: /Statement time exceeded/ },
@@ -499,9 +620,21 @@ test('@claim:threshold-verdict statement, lock, and table limits determine GO or
         assert.equal(report.verdict, 'NO-GO')
         assert.match(report.decision_reasons.join(' '), scenario.reason)
         assert.equal(report.thresholds[scenario.option.slice(2).replaceAll('-', '_')], Number(scenario.value))
-        assert.match(readFileSync(join(output, 'runbook.md'), 'utf8'), /Decision limits[\s\S]*Statement time:[\s\S]*Lock wait:[\s\S]*Table growth:/)
+        const runbook = readFileSync(join(output, 'runbook.md'), 'utf8')
+        assert.match(runbook, /Decision limits[\s\S]*Statement time:[\s\S]*Lock wait:[\s\S]*Table growth:/)
+        assert.match(runbook, new RegExp(`${scenario.value}`))
       } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
     }
+
+    const defaults = makeFakeDocker()
+    const defaultsOutput = join(defaults.sandbox, `${engine}-defaults`)
+    try {
+      assertSuccess(runCli(['demo', '--engine', engine, '--output', defaultsOutput], { cwd: defaults.sandbox, env: defaults.env }))
+      const report = JSON.parse(readFileSync(join(defaultsOutput, 'report.json'), 'utf8'))
+      assert.deepEqual(report.thresholds, { max_statement_ms: 30000, max_lock_wait_ms: 1000, max_table_growth_bytes: 104857600 })
+      const runbook = readFileSync(join(defaultsOutput, 'runbook.md'), 'utf8')
+      for (const value of ['30000', '1000', '104857600']) assert.match(runbook, new RegExp(value))
+    } finally { rmSync(defaults.sandbox, { recursive: true, force: true }) }
 
     const extreme = makeFakeDocker({ highLock: true, highTable: true })
     const extremeOutput = join(extreme.sandbox, `${engine}-extreme`)
@@ -539,7 +672,7 @@ test('@claim:safe-json control characters in valid migration filenames stay vali
   } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
 })
 
-test('@claim:container-cleanup disposable containers are removed after success and failure', () => {
+test('Docker command construction removes disposable containers after success and failure', () => {
   for (const failMigration of [false, true]) {
     const fake = makeFakeDocker({ failMigration })
     try {

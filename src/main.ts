@@ -4,6 +4,7 @@ import './accessibility.css'
 import './touch-targets.css'
 import './forms.css'
 import heroArt from './assets/lock-stack.webp'
+import recording from '../public/demo-recording.json'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 const productSlug = 'migration-lock-rehearsal'
@@ -15,27 +16,34 @@ const day = 86_400_000
 
 type LicenseCache = { valid: boolean; checkedAt: number }
 
-const nav = '<header class="site-header"><a class="wordmark" href="/" aria-label="Migration Lock Rehearsal home">MLR<span>///</span></a><nav aria-label="Main navigation"><a href="/demo">Demo</a><a href="/#how">How it works</a><a href="/privacy">Privacy</a></nav></header>'
+const nav = '<header class="site-header"><a class="wordmark" href="/" aria-label="Migration Lock Rehearsal home">MLR<span>///</span></a><nav aria-label="Main navigation"><a href="/?demo=1">Demo</a><a href="/#how">How it works</a><a href="/privacy">Privacy</a></nav></header>'
 const footer = '<footer><p>Rehearse database migrations before production.</p><p><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · Built by Param Factory · v0.1.0</p></footer>'
-const terminal = '<section class="terminal" aria-labelledby="terminal-title"><div class="terminal-bar"><span></span><span></span><span></span><b id="terminal-title">DISPOSABLE RUN / postgres</b></div><pre tabindex="0" aria-label="Sample terminal output"><code><i>$</i> mlr demo --output ./mlr-demo\nstarting a fresh Postgres container\nloading invented fixture: 6 customers\nrunning add_customer_flag.sql\nstatement time: 184 ms / limit: 30,000 ms\nlock wait: 0 ms / limit: 1,000 ms\ntable growth: 8,192 bytes / limit: 104,857,600 bytes\nrollback: checked\n<span class="go">VERDICT: GO</span>\nwrote ./mlr-demo/runbook.md<span class="cursor" aria-hidden="true">_</span></code></pre></section>'
+type DemoRecording = { command: string; transcript: string[] }
+const demoRecording = recording as DemoRecording
+
+function terminal(recordingMode = false) {
+  const output = recordingMode ? '' : demoRecording.transcript.join('\n')
+  const recordingClass = recordingMode ? ' terminal-recording' : ''
+  return '<section class="terminal' + recordingClass + '" aria-labelledby="terminal-title"><div class="terminal-bar"><span></span><span></span><span></span><b id="terminal-title">RECORDED DRY RUN / postgres</b></div><pre tabindex="0" aria-label="Recorded sample terminal output"><code id="terminal-output">' + output + '</code><span class="cursor" aria-hidden="true">_</span></pre>' + (recordingMode ? '<p class="recording-note">Recorded from <code>' + demoRecording.command + '</code> using the bundled release binary.</p>' : '') + '</section>'
+}
 
 function shell(content: string) {
   return nav + '<main id="main" tabindex="-1">' + content + '</main>' + footer + '<div id="route-note" class="sr-only" aria-live="polite"></div>'
 }
 
 function landing() {
-  return shell('<section class="hero"><div><p class="eyebrow">MIGRATION PRE-FLIGHT / 0.1.0</p><h1>Rehearse your migration before production</h1><p class="lead">For database maintainers who need lock, rewrite, and rollback estimates before a release.</p><p class="action-row"><a class="button primary" href="/demo">Try it with sample data</a><span>See the bundled go/no-go card.</span></p><ul class="facts"><li>Local dry-run works offline</li><li>No tracking</li><li>$29 once; checklist optional</li></ul></div><figure><img src="' + heroArt + '" width="1024" height="1024" fetchpriority="high" alt="A database cylinder held in an orange padlock with blue diagnostic tape."><figcaption>Measure the risk before the window opens.</figcaption></figure></section>' + terminal + '<section id="how" class="steps" aria-labelledby="how-title" tabindex="-1"><p class="eyebrow">THREE MOVES</p><h2 id="how-title">Run a migration rehearsal</h2><ol><li><b>Bring a fixture.</b><span>Use sanitized, production-shaped data.</span></li><li><b>Supply SQL.</b><span>Add the migration, rollback, and optional workload.</span></li><li><b>Read the card.</b><span>Compare timings, lock waits, and table growth with clear limits.</span></li></ol></section><section class="limits" aria-labelledby="limits-title"><h2 id="limits-title">What this tool does not do</h2><div><p>The rehearsal has no database URL option. It runs your SQL in the new container it creates.</p><p>Results are estimates. A failed command or exceeded limit always writes NO-GO.</p></div></section><section class="install" aria-labelledby="install-title"><h2 id="install-title">Install and rehearse</h2><pre><code>cargo run -- rehearse --fixture fixture.sql --migration change.sql --rollback down.sql --workload read.sql</code></pre><p>Docker must be running. The CLI creates a container and removes it after the run.</p></section><section class="paid" aria-labelledby="paid-title"><p class="eyebrow">OPERATOR LICENSE</p><h2 id="paid-title">Add the operator review checklist</h2><p>$29 once. The license adds a reusable release checklist. CLI reports and safety checks stay free.</p><p class="action-row"><a class="button primary" href="' + checkout + '">Buy operator license — $29</a><span id="license-state" role="status">No license saved.</span></p><form id="restore-license"><label for="license-token">Have a license? Paste it.</label><p id="license-help">The token stays in this browser and goes only to Sociobot for verification.</p><div><input id="license-token" name="license" autocomplete="off" aria-describedby="license-help license-state" required><button class="button" type="submit">Restore license</button><button class="button quiet" id="remove-license" type="button" hidden>Remove saved license</button></div></form><div id="operator-checklist" class="operator-checklist" hidden><h3>Operator review checklist</h3><ol><li>Attach the JSON card to the change ticket.</li><li>Name the owner who can stop the release.</li><li>Record the tested rollback command.</li><li>Compare every limit with the approved release budget.</li></ol></div><p class="legal-links">Sociobot and Dodo are the merchant of record. <a href="/privacy">Read privacy</a> and <a href="/terms">terms</a>.</p></section>')
+  return shell('<section class="hero"><div><p class="eyebrow">POSTGRES + CLICKHOUSE / v0.1.0</p><h1>Rehearse your migration before production</h1><p class="lead">For Postgres and ClickHouse maintainers who need lock waits, table growth, and rollback results before release.</p><p class="action-row"><a class="button primary" href="/?demo=1">Try it with sample data</a><span>Watch the bundled go/no-go report.</span></p><ul class="facts"><li>Local dry-run works offline</li><li>No tracking before a license action</li><li>$29 once; browser checklist</li></ul></div><figure><img src="' + heroArt + '" width="1024" height="1024" fetchpriority="high" alt="A database cylinder held in an orange padlock with blue diagnostic tape."><figcaption>Compare measured results with your release limits.</figcaption></figure></section>' + terminal() + '<section id="how" class="steps" aria-labelledby="how-title" tabindex="-1"><p class="eyebrow">HOW IT WORKS</p><h2 id="how-title">Run a migration rehearsal</h2><ol><li><b>Bring a fixture.</b><span>Use sanitized, production-shaped data.</span></li><li><b>Supply SQL.</b><span>Add the migration, rollback, and optional workload.</span></li><li><b>Read the report.</b><span>Compare timings, lock waits, and table growth with clear limits.</span></li></ol></section><section class="limits" aria-labelledby="limits-title"><h2 id="limits-title">What this tool does not do</h2><div><p>The rehearsal has no database URL option. It runs your SQL in the new container it creates.</p><p>Results are estimates. A failed command or exceeded limit writes NO-GO.</p></div></section><section id="install" class="install" aria-labelledby="install-title" tabindex="-1"><h2 id="install-title">Install and rehearse</h2><p><a href="https://github.com/B-Divyesh/sf-migration-lock-rehearsal" rel="external">Get the source on GitHub</a>.</p><pre><code>cargo install --git https://github.com/B-Divyesh/sf-migration-lock-rehearsal --locked\nmlr rehearse --fixture ./fixture.sql --migration ./change.sql --rollback ./down.sql --workload ./read.sql --output ./rehearsal-report</code></pre><p>Docker must be running. The CLI creates a container and removes it after the run.</p></section><section class="paid" aria-labelledby="paid-title"><p class="eyebrow">OPERATOR LICENSE</p><h2 id="paid-title">Add the operator review checklist</h2><p>$29 once. A valid license shows the operator review checklist in this browser. Reports and safety checks do not require a license.</p><p class="action-row"><a class="button primary" href="' + checkout + '">Buy operator license — $29</a><span id="license-state" role="status">No license saved.</span></p><form id="restore-license"><label for="license-token">Have a license? Paste it.</label><p id="license-help">The token stays in this browser and goes only to Sociobot for verification.</p><div><input id="license-token" name="license" autocomplete="off" aria-describedby="license-help license-state" required><button class="button" type="submit">Restore license</button><button class="button quiet" id="remove-license" type="button" hidden>Remove saved license</button></div></form><div id="operator-checklist" class="operator-checklist" hidden><h3>Operator review checklist</h3><ol><li>Attach the JSON report to the change ticket.</li><li>Name the owner who can stop the release.</li><li>Record the tested rollback command.</li><li>Compare every limit with the approved release budget.</li></ol></div><p class="legal-links"><a href="/privacy">Read privacy</a> and <a href="/terms">terms</a>.</p></section>')
 }
 
 function demo() {
-  return shell('<section class="page-head"><p class="eyebrow">SAMPLE SANDBOX</p><h1>Read a sample migration card</h1><p class="lead">This preview uses invented customer records and does not save anything.</p><p class="action-row"><button class="button primary" id="reset-demo">Reset demo</button><a class="button" href="/">Start for real</a></p></section><div class="demo-banner" role="status">Demo — sample data, nothing is saved</div>' + terminal + '<section class="report" aria-labelledby="report-title"><h2 id="report-title">Go/no-go card</h2><dl><div><dt>Engine</dt><dd>Postgres 16</dd></div><div><dt>Statement time</dt><dd>184 / 30,000 ms</dd></div><div><dt>Lock wait</dt><dd>0 / 1,000 ms</dd></div><div><dt>Table growth</dt><dd>8,192 / 104,857,600 bytes</dd></div><div><dt>Rollback</dt><dd>Checked</dd></div><div><dt>Verdict</dt><dd>GO</dd></div></dl><p><b>Estimate only.</b> Rehearse against a sanitized, production-shaped fixture before deployment.</p></section>')
+  return shell('<section class="page-head"><p class="eyebrow">SAMPLE SANDBOX</p><h1>Read a sample migration report</h1><p class="lead">This preview uses invented customer records and does not save anything.</p><p class="action-row"><button class="button primary" id="reset-demo">Reset demo</button><a class="button" href="/#install">Install the CLI</a></p></section><div class="demo-banner" role="status">Demo — sample data, nothing is saved <span id="demo-status" class="sr-only" aria-live="polite"></span></div>' + terminal(true) + '<section class="report" aria-labelledby="report-title"><h2 id="report-title">Go/no-go report</h2><dl><div><dt>Engine</dt><dd>Postgres 16</dd></div><div><dt>Statement time</dt><dd>184 / 30,000 ms</dd></div><div><dt>Lock wait</dt><dd>0 / 1,000 ms</dd></div><div><dt>Table growth</dt><dd>8,192 / 104,857,600 bytes</dd></div><div><dt>Rollback</dt><dd>Checked</dd></div><div><dt>Verdict</dt><dd>GO</dd></div></dl><p><b>Estimate only.</b> Rehearse against a sanitized, production-shaped fixture before deployment.</p></section>')
 }
 
 function legal(kind: 'privacy' | 'terms') {
   if (kind === 'privacy') {
     return shell('<article class="legal"><p class="eyebrow">PRIVACY</p><h1>Privacy for a local migration tool</h1><h2>No tracking or account data</h2><p>The site makes only same-origin requests until you use a license action. It has no analytics.</p><h2>Your reports stay local</h2><p>The CLI reads the SQL files you name. It writes reports only to your chosen output folder.</p><h2>License storage</h2><p>A saved license token stays in this browser. Verification sends only that token to api.sociobot.in.</p><p>Use Remove saved license on the home page to delete the token and cached result.</p></article>')
   }
-  return shell('<article class="legal"><p class="eyebrow">TERMS</p><h1>Terms for Migration Lock Rehearsal</h1><h2>Use disposable data only</h2><p>Use sanitized fixtures. Measurements are estimates, not a guarantee of production behavior.</p><p>Review the generated runbook before every deployment.</p><h2>License and refunds</h2><p>The operator license costs $29 once. It adds the operator review checklist in this browser.</p><p>Sociobot and Dodo are the merchant of record. Refunds are handled there and revoke the license.</p></article>')
+  return shell('<article class="legal"><p class="eyebrow">TERMS</p><h1>Terms for Migration Lock Rehearsal</h1><h2>Use disposable data only</h2><p>Use sanitized fixtures. Measurements are estimates, not a guarantee of production behavior.</p><p>Review the generated runbook before every deployment.</p><h2>Operator license</h2><p>The operator license costs $29 once. A valid license shows the review checklist in this browser.</p><p>Checkout and license verification use Sociobot.</p></article>')
 }
 
 function notFound() {
@@ -43,8 +51,8 @@ function notFound() {
 }
 
 const routeMetadata: Record<string, { title: string; description: string }> = {
-  '/': { title: 'Migration Lock Rehearsal — Test database changes', description: 'Rehearse a Postgres or ClickHouse migration and write a measured go/no-go card before production.' },
-  '/demo': { title: 'Demo — Migration Lock Rehearsal', description: 'Read the bundled sample migration card with statement, lock, table growth, and rollback limits.' },
+  '/': { title: 'Migration Lock Rehearsal — Test database changes', description: 'Rehearse a Postgres or ClickHouse migration and write a measured go/no-go report before production.' },
+  '/demo': { title: 'Demo — Migration Lock Rehearsal', description: 'Read the bundled sample migration report with statement, lock, table growth, and rollback limits.' },
   '/privacy': { title: 'Privacy — Migration Lock Rehearsal', description: 'Learn what the local CLI writes and how optional operator license verification handles its token.' },
   '/terms': { title: 'Terms — Migration Lock Rehearsal', description: 'Read the terms for migration rehearsals and the one-time operator license.' },
   '/404': { title: 'Not found — Migration Lock Rehearsal', description: 'Return to the Migration Lock Rehearsal documentation.' },
@@ -152,10 +160,32 @@ function focusHash() {
   return true
 }
 
+let recordingTimer: number | undefined
+function startDemoRecording() {
+  window.clearInterval(recordingTimer)
+  const output = document.querySelector<HTMLElement>('#terminal-output')
+  const status = document.querySelector<HTMLElement>('#demo-status')
+  if (!output) return
+  let index = 0
+  output.textContent = ''
+  if (status) status.textContent = 'Sample recording restarted.'
+  const reveal = () => {
+    output.textContent = demoRecording.transcript.slice(0, index + 1).join('\n')
+    index += 1
+    if (index >= demoRecording.transcript.length) {
+      window.clearInterval(recordingTimer)
+      if (status) status.textContent = 'Sample recording complete.'
+    }
+  }
+  reveal()
+  recordingTimer = window.setInterval(reveal, 260)
+}
+
 function route(moveFocus = false) {
   const path = location.pathname.replace(/\/$/, '') || '/'
-  app.innerHTML = path === '/demo' ? demo() : path === '/privacy' ? legal('privacy') : path === '/terms' ? legal('terms') : path === '/404' ? notFound() : path === '/' ? landing() : notFound()
-  updateMetadata(path)
+  const isDemo = path === '/demo' || (path === '/' && new URLSearchParams(location.search).get('demo') === '1')
+  app.innerHTML = isDemo ? demo() : path === '/privacy' ? legal('privacy') : path === '/terms' ? legal('terms') : path === '/404' ? notFound() : path === '/' ? landing() : notFound()
+  updateMetadata(isDemo ? '/demo' : path)
   requestAnimationFrame(() => {
     if (!focusHash() && moveFocus) {
       const heading = document.querySelector<HTMLElement>('h1')!
@@ -164,11 +194,10 @@ function route(moveFocus = false) {
     }
   })
   document.querySelector('#route-note')!.textContent = document.title
-  document.querySelector('#reset-demo')?.addEventListener('click', () => {
-    const button = document.querySelector<HTMLButtonElement>('#reset-demo')!
-    button.textContent = 'Demo reset'
-    setTimeout(() => { button.textContent = 'Reset demo' }, 1300)
-  })
+  if (isDemo) {
+    startDemoRecording()
+    document.querySelector('#reset-demo')?.addEventListener('click', startDemoRecording)
+  }
   document.querySelectorAll<HTMLAnchorElement>('a[href^="/"]').forEach(anchor => anchor.addEventListener('click', event => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const url = new URL(anchor.href)
