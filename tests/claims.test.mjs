@@ -25,7 +25,7 @@ function assertSuccess(result) {
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
 }
 
-function makeFakeDocker({ failMigration = false, failRollback = false, failWorkload = false, delayWorkloadFailure = false, failMeasurement = false, highLock = false, highTable = false } = {}) {
+function makeFakeDocker({ failMigration = false, failRollback = false, failWorkload = false, delayWorkloadFailure = false, failMeasurement = false, highLock = false, highTable = false, hangMigration = false, hangWorkload = false, fastMigration = false } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), 'mlr-docker-'))
   const bin = join(sandbox, 'bin')
   const state = join(sandbox, 'state')
@@ -62,9 +62,12 @@ case "$*" in
     exit 0 ;;
   *"/work/workload.sql"*)
     touch "$MLR_FAKE_STATE/workload-running"
+    test "\${MLR_HANG_WORKLOAD:-0}" = 1 && exec sleep 60
     if test "\${MLR_FAIL_WORKLOAD:-0}" = 1; then test "\${MLR_DELAY_WORKLOAD_FAILURE:-0}" = 0 || sleep 0.35; exit 19; fi
-    sleep 1; exit 0 ;;
+    exec sleep 1 ;;
   *"/work/migration.sql"*)
+    test "\${MLR_HANG_MIGRATION:-0}" = 1 && exec sleep 60
+    test "\${MLR_FAST_MIGRATION:-0}" = 1 && exit 0
     sleep 0.05
     test -f "$MLR_FAKE_STATE/workload-running" && touch "$MLR_FAKE_STATE/overlap"
     sleep 0.12
@@ -91,9 +94,55 @@ exit 0
       MLR_FAIL_MEASUREMENT: failMeasurement ? '1' : '0',
       MLR_HIGH_LOCK: highLock ? '1' : '0',
       MLR_HIGH_TABLE: highTable ? '1' : '0',
+      MLR_HANG_MIGRATION: hangMigration ? '1' : '0',
+      MLR_HANG_WORKLOAD: hangWorkload ? '1' : '0',
+      MLR_FAST_MIGRATION: fastMigration ? '1' : '0',
     },
   }
 }
+
+test('@claim:child-deadlines blocked migration and workload children write NO-GO artifacts and clean up', () => {
+  for (const engine of ['postgres', 'clickhouse']) {
+    for (const [child, options] of [['migration', { hangMigration: true }], ['workload', { hangWorkload: true, fastMigration: true }]]) {
+      const fake = makeFakeDocker(options)
+      const output = join(fake.sandbox, `${engine}-${child}-deadline`)
+      try {
+        const started = Date.now()
+        const result = runCli(['demo', '--engine', engine, '--output', output, '--max-statement-ms', '10', '--json'], { cwd: fake.sandbox, env: fake.env })
+        assert.notEqual(result.status, 0, `${engine} ${child} unexpectedly succeeded\n${result.stdout}\n${result.stderr}`)
+        assert.ok(Date.now() - started < 1_000, `${engine} ${child} exceeded its enforced deadline`)
+        const report = JSON.parse(readFileSync(join(output, 'report.json'), 'utf8'))
+        assert.equal(report.verdict, 'NO-GO')
+        assert.equal(report.failure_stage, child)
+        assert.match(report.failure, new RegExp(`${child} exceeded the configured 10 ms deadline and was terminated`))
+        assert.deepEqual(JSON.parse(result.stdout), report)
+        assert.match(readFileSync(join(output, 'runbook.md'), 'utf8'), /Verdict: NO-GO[\s\S]*Failed stage[\s\S]*Recovery:/)
+        assert.match(readFileSync(fake.log, 'utf8'), /rm -f mlr-[0-9]+/)
+      } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
+    }
+  }
+})
+
+test('@claim:interruption-cleanup SIGINT and SIGTERM write NO-GO and remove the disposable container', async () => {
+  for (const requestedSignal of ['SIGINT', 'SIGTERM']) {
+    const fake = makeFakeDocker({ hangMigration: true })
+    const output = join(fake.sandbox, `interrupted-${requestedSignal}`)
+    try {
+      const child = spawn(cli, ['demo', '--output', output, '--max-statement-ms', '10000'], { cwd: fake.sandbox, env: fake.env, stdio: 'pipe' })
+      for (let attempt = 0; attempt < 100 && !existsSync(fake.log); attempt += 1) await new Promise(resolve => setTimeout(resolve, 10))
+      for (let attempt = 0; attempt < 100 && !readFileSync(fake.log, 'utf8').includes('/work/migration.sql'); attempt += 1) await new Promise(resolve => setTimeout(resolve, 10))
+      child.kill(requestedSignal)
+      const [code, signal] = await once(child, 'exit')
+      assert.equal(signal, null)
+      assert.notEqual(code, 0)
+      const report = JSON.parse(readFileSync(join(output, 'report.json'), 'utf8'))
+      assert.equal(report.verdict, 'NO-GO')
+      assert.equal(report.failure_stage, 'interrupted')
+      assert.match(report.failure, /migration and workload were terminated/)
+      assert.match(readFileSync(fake.log, 'utf8'), /rm -f mlr-[0-9]+/)
+    } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
+  }
+})
 
 test('@claim:demo-report bundled offline dry-run writes a go/no-go runbook', () => {
   const parent = mkdtempSync(join(tmpdir(), 'mlr-claim-'))
@@ -132,6 +181,10 @@ test('@claim:free-cli reports and safety checks run without a license', () => {
     }
     assertSuccess(runCli(['demo', '--dry-run', '--output', join(parent, 'report')], { cwd: parent, env }))
     assertSuccess(runCli(['guard', 'postgres://ops@localhost/rehearsal'], { cwd: parent, env }))
+    const noFlags = runCli(['rehearse'], { cwd: parent, env })
+    assert.notEqual(noFlags.status, 0)
+    assert.match(noFlags.stderr, /missing required --fixture FIXTURE\.sql and --migration CHANGE\.sql/)
+    assert.match(noFlags.stderr, /mlr rehearse --help/)
     const rehearsal = runCli(['rehearse', '--fixture', 'missing.sql', '--migration', 'missing.sql'], { cwd: parent, env })
     assert.notEqual(rehearsal.status, 0)
     assert.doesNotMatch(rehearsal.stderr, /license|checkout|sociobot/i)
@@ -233,6 +286,8 @@ test('product copy uses one name for the JSON decision document', () => {
   assert.match(readFileSync(join(root, 'src/main.ts'), 'utf8'), /Read a sample go\/no-go report/)
   assert.match(readFileSync(join(root, 'public/404.html'), 'utf8'), /Migration Lock Rehearsal page/)
   assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /go\/no-go report before a migration/)
+  assert.doesNotMatch(readFileSync(join(root, 'README.md'), 'utf8'), /dry-run[\s\S]{0,120}measured results/i)
+  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /dry-run[\s\S]{0,120}fixed sample values/i)
 })
 
 test('@claim:site-private static site stays same-origin and stores no visitor data', async () => {
@@ -262,7 +317,7 @@ test('@claim:site-private static site stays same-origin and stores no visitor da
         assert.deepEqual(errors, [])
         if (viewport.width === 390) {
           await page.goto(origin + '/')
-          for (const selector of ['.wordmark', 'nav a', 'footer a']) {
+          for (const selector of ['.wordmark', 'nav a', 'footer a', '.install a[rel="external"]']) {
             for (const box of await page.locator(selector).evaluateAll(nodes => nodes.map(node => {
               const rect = node.getBoundingClientRect()
               return { width: rect.width, height: rect.height }
@@ -293,9 +348,14 @@ test('@claim:site-private static site stays same-origin and stores no visitor da
       await page.getByText('Sample recording restarted.', { exact: true }).waitFor()
       const firstLineAfterReset = await page.locator('#terminal-output').textContent()
       assert.match(firstLineAfterReset ?? '', /mlr demo --dry-run/)
+      await page.locator('.terminal pre').focus()
+      assert.deepEqual(await page.locator('.terminal pre').evaluate(node => {
+        const style = getComputedStyle(node)
+        return { outlineWidth: style.outlineWidth, outlineColor: style.outlineColor }
+      }), { outlineWidth: '4px', outlineColor: 'rgb(0, 87, 255)' })
       await page.emulateMedia({ reducedMotion: 'reduce' })
       const motion = await page.locator('.cursor').evaluate(node => getComputedStyle(node).animationDuration)
-      assert.equal(motion, '1e-05s')
+      assert.equal(motion, '0s')
       await context.close()
     } finally { await browser.close() }
   })
@@ -636,7 +696,7 @@ test('@claim:threshold-verdict statement, lock, and table limits determine GO or
   assert.match(help.stdout, /--max-table-growth-bytes N\s+Default: 104857600/)
   for (const engine of ['postgres', 'clickhouse']) {
     for (const scenario of [
-      { option: '--max-statement-ms', value: '1', reason: /Statement time exceeded/ },
+      { option: '--max-statement-ms', value: '1', reason: /deadline|Statement time exceeded/ },
       { option: '--max-lock-wait-ms', value: '30', reason: /Lock wait exceeded/ },
       { option: '--max-table-growth-bytes', value: '4096', reason: /Table growth exceeded/ },
     ]) {

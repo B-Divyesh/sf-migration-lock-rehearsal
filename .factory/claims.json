@@ -91,6 +91,20 @@
     "sandbox": "deterministic Docker command double fails each stage for both engines, including a workload that fails after migration; assert non-zero exit, NO-GO JSON stdout/file, failure stage, null missing measurement, and recovery runbook"
   },
   {
+    "id": "child-deadlines",
+    "claim": "A migration or workload that exceeds the configured statement deadline is terminated, writes a NO-GO report and runbook, and removes its disposable container.",
+    "where": "README, CLI help",
+    "test": "npm test -- --test-name-pattern @claim:child-deadlines",
+    "sandbox": "deterministic Docker command double leaves each child active; run both engines with a 10 ms deadline and assert a non-zero exit, NO-GO JSON/stdout/runbook, timeout stage, and docker rm -f"
+  },
+  {
+    "id": "interruption-cleanup",
+    "claim": "SIGINT or SIGTERM during a rehearsal terminates active children, writes a NO-GO report, and removes the disposable container.",
+    "where": "README, CLI help",
+    "test": "npm test -- --test-name-pattern @claim:interruption-cleanup",
+    "sandbox": "deterministic hanging migration; send SIGTERM to the release CLI after migration starts, then assert non-zero exit, interrupted NO-GO report, and docker rm -f"
+  },
+  {
     "id": "threshold-verdict",
     "claim": "The default limits are 30,000 ms statement time, 1,000 ms lock wait, and 104,857,600 bytes table growth. Default and configured limits appear in the JSON report and runbook, and determine the verdict.",
     "where": "landing demo report, README, CLI help",

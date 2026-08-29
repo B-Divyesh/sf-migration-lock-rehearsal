@@ -8,7 +8,7 @@ The static documentation site lives at `https://migration-lock-rehearsal.sociobo
 
 ## Quick demo
 
-The bundled dry-run demo works locally without Docker or network access. It writes a sample go/no-go report with measured results:
+The bundled dry-run demo works locally without Docker or network access. It writes a sample go/no-go report with fixed sample values:
 
 ```sh
 cargo run -- demo --dry-run --output ./mlr-demo
@@ -47,6 +47,8 @@ cargo run -- rehearse \
 Read `./rehearsal-report/report.json` in automation and `./rehearsal-report/runbook.md` during the change review.
 When a workload, measurement, migration, or rollback command fails, the report is **NO-GO**. The CLI writes both files with the failed stage and recovery step, then exits non-zero. Missing measurements are `null`, never zero.
 
+Each migration and workload child must finish within `--max-statement-ms`. On expiry, the CLI terminates active children, writes **NO-GO**, and removes the disposable container. SIGINT and SIGTERM follow the same recovery path.
+
 Use `--engine clickhouse` with a ClickHouse fixture and migration. Both engines run the workload while the migration executes. They record statement time, lock waits, table bytes, table growth, and rollback status. Results are estimates from a new container. Use a production-shaped sanitized fixture before relying on them. The rehearsal command has no database URL option.
 
 The default release limits are 30,000 ms statement time, 1,000 ms lock wait, and 104,857,600 bytes table growth. Override them with `--max-statement-ms`, `--max-lock-wait-ms`, and `--max-table-growth-bytes`. Every configured limit appears in the JSON report and runbook. An exceeded limit writes **NO-GO** and exits non-zero.
@@ -61,6 +63,8 @@ mlr guard DATABASE_URL
 ```
 
 `mlr guard` is a safety check for automation. It parses the URL host, accepts only exact localhost or loopback addresses, and rejects substring decoys. The rehearsal command creates its own Docker container instead of taking a database URL.
+
+`mlr rehearse` requires `--fixture` and `--migration`. Run `mlr rehearse --help` to see a complete command.
 
 Demo reset is deliberately narrow. `mlr demo --output ./mlr-demo --reset` removes only a real directory marked by a prior `mlr demo` run. It refuses roots, workspaces, home/current directories, aliases, symlinks, and unmarked folders.
 

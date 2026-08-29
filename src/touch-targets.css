@@ -10,7 +10,8 @@ nav {
 }
 
 nav a,
-footer a {
+footer a,
+.install a[rel="external"] {
   display: inline-flex;
   align-items: center;
   min-height: 44px;

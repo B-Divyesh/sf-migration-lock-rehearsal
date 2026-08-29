@@ -3,6 +3,10 @@ use std::{
     net::IpAddr,
     path::{Path, PathBuf},
     process::{Child, Command, ExitCode},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -22,6 +26,11 @@ const CLICKHOUSE_FIXTURE: &str = include_str!("../examples/clickhouse/fixture.sq
 const CLICKHOUSE_MIGRATION: &str = include_str!("../examples/clickhouse/add_customer_flag.sql");
 const CLICKHOUSE_ROLLBACK: &str = include_str!("../examples/clickhouse/rollback_customer_flag.sql");
 const CLICKHOUSE_WORKLOAD: &str = include_str!("../examples/clickhouse/read_workload.sql");
+
+#[cfg(unix)]
+static INTERRUPTED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+#[cfg(unix)]
+static SIGNAL_HANDLERS_INSTALLED: AtomicBool = AtomicBool::new(false);
 struct Opt {
     engine: String,
     fixture: String,
@@ -69,6 +78,7 @@ fn main() -> ExitCode {
     }
 }
 fn run() -> Result<(), String> {
+    install_interrupt_handler()?;
     let a: Vec<String> = env::args().collect();
     if a.len() < 2 {
         usage();
@@ -138,6 +148,36 @@ fn run() -> Result<(), String> {
             }
         }
         x => Err(format!("unknown command: {x}")),
+    }
+}
+
+fn install_interrupt_handler() -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let flag = INTERRUPTED
+            .get_or_init(|| Arc::new(AtomicBool::new(false)))
+            .clone();
+        flag.store(false, Ordering::SeqCst);
+        if !SIGNAL_HANDLERS_INSTALLED.swap(true, Ordering::SeqCst) {
+            signal_hook::flag::register(signal_hook::consts::signal::SIGINT, flag.clone())
+                .map_err(|error| format!("install SIGINT handler: {error}"))?;
+            signal_hook::flag::register(signal_hook::consts::signal::SIGTERM, flag)
+                .map_err(|error| format!("install SIGTERM handler: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn interruption_requested() -> bool {
+    #[cfg(unix)]
+    {
+        INTERRUPTED
+            .get()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
+    }
+    #[cfg(not(unix))]
+    {
+        false
     }
 }
 
@@ -563,6 +603,7 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     } else {
         None
     };
+    let workload_started = workload.as_ref().map(|_| Instant::now());
     let start = Instant::now();
     let mut migration = match Command::new("docker")
         .args([
@@ -594,9 +635,21 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     };
     let mut observed_wait = 0;
     loop {
+        if interruption_requested() {
+            terminate_child(&mut migration);
+            cancel_child(&mut workload);
+            measurements.duration_ms = Some(start.elapsed().as_millis());
+            measurements.max_lock_wait_ms = Some(observed_wait);
+            return write_failure_report(
+                o,
+                "postgres",
+                "interrupted",
+                "rehearsal interrupted; migration and workload were terminated",
+                measurements,
+            );
+        }
         if let Err(error) = check_workload(&mut workload, "Postgres") {
-            let _ = migration.kill();
-            let _ = migration.wait();
+            terminate_child(&mut migration);
             measurements.duration_ms = Some(start.elapsed().as_millis());
             measurements.max_lock_wait_ms = Some(observed_wait);
             return write_failure_report(o, "postgres", "workload", &error, measurements);
@@ -616,6 +669,32 @@ fn rehearse(o: &Opt) -> Result<(), String> {
                 );
             }
             Ok(None) => {
+                if deadline_expired(start, o.max_statement_ms) {
+                    terminate_child(&mut migration);
+                    cancel_child(&mut workload);
+                    measurements.duration_ms = Some(start.elapsed().as_millis());
+                    measurements.max_lock_wait_ms = Some(observed_wait);
+                    return write_failure_report(
+                        o,
+                        "postgres",
+                        "migration",
+                        &deadline_message("migration", o.max_statement_ms),
+                        measurements,
+                    );
+                }
+                if workload_deadline_expired(&workload, workload_started, o.max_statement_ms) {
+                    terminate_child(&mut migration);
+                    cancel_child(&mut workload);
+                    measurements.duration_ms = Some(start.elapsed().as_millis());
+                    measurements.max_lock_wait_ms = Some(observed_wait);
+                    return write_failure_report(
+                        o,
+                        "postgres",
+                        "workload",
+                        &deadline_message("workload", o.max_statement_ms),
+                        measurements,
+                    );
+                }
                 observed_wait = match pg_lock_wait_ms(&name) {
                     Ok(wait) => observed_wait.max(wait),
                     Err(error) => {
@@ -651,7 +730,12 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     let duration = start.elapsed().as_millis();
     measurements.duration_ms = Some(duration);
     measurements.max_lock_wait_ms = Some(observed_wait);
-    if let Err(error) = finish_workload(&mut workload, "Postgres") {
+    if let Err(error) = finish_workload(
+        &mut workload,
+        "Postgres",
+        workload_started,
+        o.max_statement_ms,
+    ) {
         return write_failure_report(o, "postgres", "workload", &error, measurements);
     }
     let after = match table_bytes(&name) {
@@ -761,6 +845,7 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
     } else {
         None
     };
+    let workload_started = workload.as_ref().map(|_| Instant::now());
     let start = Instant::now();
     let mut migration = match Command::new("docker")
         .args([
@@ -786,9 +871,21 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
     };
     let mut observed_wait = 0;
     loop {
+        if interruption_requested() {
+            terminate_child(&mut migration);
+            cancel_child(&mut workload);
+            measurements.duration_ms = Some(start.elapsed().as_millis());
+            measurements.max_lock_wait_ms = Some(observed_wait);
+            return write_failure_report(
+                o,
+                "clickhouse",
+                "interrupted",
+                "rehearsal interrupted; migration and workload were terminated",
+                measurements,
+            );
+        }
         if let Err(error) = check_workload(&mut workload, "ClickHouse") {
-            let _ = migration.kill();
-            let _ = migration.wait();
+            terminate_child(&mut migration);
             measurements.duration_ms = Some(start.elapsed().as_millis());
             measurements.max_lock_wait_ms = Some(observed_wait);
             return write_failure_report(o, "clickhouse", "workload", &error, measurements);
@@ -808,6 +905,32 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
                 );
             }
             Ok(None) => {
+                if deadline_expired(start, o.max_statement_ms) {
+                    terminate_child(&mut migration);
+                    cancel_child(&mut workload);
+                    measurements.duration_ms = Some(start.elapsed().as_millis());
+                    measurements.max_lock_wait_ms = Some(observed_wait);
+                    return write_failure_report(
+                        o,
+                        "clickhouse",
+                        "migration",
+                        &deadline_message("migration", o.max_statement_ms),
+                        measurements,
+                    );
+                }
+                if workload_deadline_expired(&workload, workload_started, o.max_statement_ms) {
+                    terminate_child(&mut migration);
+                    cancel_child(&mut workload);
+                    measurements.duration_ms = Some(start.elapsed().as_millis());
+                    measurements.max_lock_wait_ms = Some(observed_wait);
+                    return write_failure_report(
+                        o,
+                        "clickhouse",
+                        "workload",
+                        &deadline_message("workload", o.max_statement_ms),
+                        measurements,
+                    );
+                }
                 observed_wait = match clickhouse_lock_wait_ms(&name) {
                     Ok(wait) => observed_wait.max(wait),
                     Err(error) => {
@@ -849,7 +972,12 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
         }
     };
     measurements.max_lock_wait_ms = Some(observed_wait);
-    if let Err(error) = finish_workload(&mut workload, "ClickHouse") {
+    if let Err(error) = finish_workload(
+        &mut workload,
+        "ClickHouse",
+        workload_started,
+        o.max_statement_ms,
+    ) {
         return write_failure_report(o, "clickhouse", "workload", &error, measurements);
     }
     let after = match clickhouse_bytes(&name) {
@@ -880,6 +1008,19 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
 }
 
 fn validate_input_files(o: &Opt) -> Result<(), String> {
+    let mut missing = Vec::new();
+    if o.fixture.is_empty() {
+        missing.push("--fixture FIXTURE.sql");
+    }
+    if o.migration.is_empty() {
+        missing.push("--migration CHANGE.sql");
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "missing required {}. Provide both flags; run `mlr rehearse --help` for an example",
+            missing.join(" and ")
+        ));
+    }
     for file in [&o.fixture, &o.migration] {
         if !Path::new(file).is_file() {
             return Err(format!("read {file}: file not found"));
@@ -893,12 +1034,36 @@ fn validate_input_files(o: &Opt) -> Result<(), String> {
     Ok(())
 }
 
+fn deadline_duration(max_statement_ms: u128) -> Duration {
+    Duration::from_millis(u64::try_from(max_statement_ms).unwrap_or(u64::MAX))
+}
+
+fn deadline_expired(start: Instant, max_statement_ms: u128) -> bool {
+    start.elapsed() >= deadline_duration(max_statement_ms)
+}
+
+fn workload_deadline_expired(
+    child: &Option<Child>,
+    started: Option<Instant>,
+    max_statement_ms: u128,
+) -> bool {
+    child.is_some() && started.is_some_and(|start| deadline_expired(start, max_statement_ms))
+}
+
+fn deadline_message(child: &str, max_statement_ms: u128) -> String {
+    format!("{child} exceeded the configured {max_statement_ms} ms deadline and was terminated")
+}
+
 fn cancel_child(child: &mut Option<Child>) {
     if let Some(child) = child.as_mut() {
-        let _ = child.kill();
-        let _ = child.wait();
+        terminate_child(child);
     }
     *child = None;
+}
+
+fn terminate_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn check_workload(child: &mut Option<Child>, engine: &str) -> Result<(), String> {
@@ -922,24 +1087,26 @@ fn check_workload(child: &mut Option<Child>, engine: &str) -> Result<(), String>
     Ok(())
 }
 
-fn finish_workload(child: &mut Option<Child>, engine: &str) -> Result<(), String> {
-    check_workload(child, engine)?;
-    let status = match child.as_mut() {
-        Some(child) => child
-            .wait()
-            .map_err(|error| format!("could not wait for {engine} workload: {error}"))?,
-        None => return Ok(()),
-    };
-    *child = None;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "supplied {engine} workload command failed with {}",
-            status
-                .code()
-                .map_or_else(|| "a signal".into(), |code| format!("exit {code}"))
-        ))
+fn finish_workload(
+    child: &mut Option<Child>,
+    engine: &str,
+    started: Option<Instant>,
+    max_statement_ms: u128,
+) -> Result<(), String> {
+    loop {
+        if interruption_requested() {
+            cancel_child(child);
+            return Err("rehearsal interrupted; workload was terminated".into());
+        }
+        check_workload(child, engine)?;
+        if child.is_none() {
+            return Ok(());
+        }
+        if workload_deadline_expired(child, started, max_statement_ms) {
+            cancel_child(child);
+            return Err(deadline_message("workload", max_statement_ms));
+        }
+        std::thread::sleep(Duration::from_millis(25));
     }
 }
 struct Cleanup(String);
@@ -1268,7 +1435,7 @@ fn write_report(o: &Opt, r: Report) -> Result<(), String> {
     Ok(())
 }
 fn usage() {
-    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json] [LIMITS]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json] [LIMITS]\n  mlr guard DATABASE_URL\n\nLimits:\n  --max-statement-ms N          Default: {DEFAULT_MAX_STATEMENT_MS}\n  --max-lock-wait-ms N          Default: {DEFAULT_MAX_LOCK_WAIT_MS}\n  --max-table-growth-bytes N    Default: {DEFAULT_MAX_TABLE_GROWTH_BYTES}\n\nA failed command, rollback, or exceeded limit writes NO-GO and exits non-zero. The URL guard accepts only exact loopback hosts. A rehearsal creates and removes its own disposable container.")
+    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json] [LIMITS]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json] [LIMITS]\n  mlr guard DATABASE_URL\n\nLimits:\n  --max-statement-ms N          Default: {DEFAULT_MAX_STATEMENT_MS}\n  --max-lock-wait-ms N          Default: {DEFAULT_MAX_LOCK_WAIT_MS}\n  --max-table-growth-bytes N    Default: {DEFAULT_MAX_TABLE_GROWTH_BYTES}\n\nA failed command, rollback, expired migration/workload deadline, or exceeded limit writes NO-GO and exits non-zero. SIGINT and SIGTERM terminate active children, write NO-GO, and remove the disposable container. The URL guard accepts only exact loopback hosts. A rehearsal creates and removes its own disposable container.")
 }
 #[cfg(test)]
 mod tests {
