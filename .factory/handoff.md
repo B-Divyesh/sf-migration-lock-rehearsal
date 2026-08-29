@@ -1,6 +1,6 @@
 # Handoff — deadline and recovery repair
 
-## Result: ready for static deployment
+## Result: PASS — deployed
 
 Repair commit: `2ad9088ce89f99889ead5e8e3caaf16488779f1d` (before this handoff
 record). This repairs every release-blocking finding in independent verification
@@ -73,6 +73,11 @@ Postgres 16/ClickHouse 24.8 claims could not run here. They remain required by
 `.github/workflows/docker-claims.yml` on every push to `main`; the deterministic
 deadline and signal tests run locally without Docker.
 
-The static deployment class is unchanged. Push `main` to trigger the factory
-static deployment, then verify `https://migration-lock-rehearsal.sociobot.in`
-with `npm run verify:url -- https://migration-lock-rehearsal.sociobot.in`.
+The static deployment class is unchanged. `main` was pushed to `origin` and
+`/opt/fleet/lib/deploy-static.sh migration-lock-rehearsal dist/site` completed
+Azure deployment `655ca37c-1dd0-4402-a328-13ef5a26230f` to the existing Static
+Web App. The custom domain returned HTTPS 200. The live index now serves
+`main-D5bt81xt.js` and `main-DCGJyank.css`, matching this build, and
+`npm run verify:url -- https://migration-lock-rehearsal.sociobot.in` passed
+desktop/mobile title, language, landmarks, alt text, console, overflow, and
+serious/critical axe checks. An unknown route returned the designed HTTP 404.
