@@ -322,7 +322,21 @@ test('product copy uses one name for the JSON decision document', () => {
     'public/404.html',
   ].map(path => readFileSync(join(root, path), 'utf8')).join('\n')
 
-  for (const rejected of ['migration report', 'migration card', 'schema change', 'go/no-go card', 'rehearsal card', 'JSON card', 'measured report']) {
+  for (const rejected of [
+    'migration report',
+    'migration card',
+    'schema change',
+    'go/no-go card',
+    'rehearsal card',
+    'JSON card',
+    'measured report',
+    'MIGRATION PRE-FLIGHT',
+    'Measure the risk before the window opens',
+    'THREE MOVES',
+    'usable sample',
+    'reusable release checklist',
+    'No tracking before a license action',
+  ]) {
     assert.doesNotMatch(productionCopy, new RegExp(rejected, 'i'), `retired term returned: ${rejected}`)
   }
   assert.match(readFileSync(join(root, 'src/main.ts'), 'utf8'), /Read a sample go\/no-go report/)
@@ -331,6 +345,18 @@ test('product copy uses one name for the JSON decision document', () => {
   assert.doesNotMatch(readFileSync(join(root, 'README.md'), 'utf8'), /dry-run[\s\S]{0,120}measured results/i)
   assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /dry-run[\s\S]{0,120}fixed sample values/i)
   assert.doesNotMatch(productionCopy, /Sociobot\/Dodo|refunds are handled/i)
+  assert.match(readFileSync(join(root, 'src/main.ts'), 'utf8'), /No analytics; license checks contact Sociobot/)
+  assert.match(readFileSync(join(root, '.factory', 'catalog-description.txt'), 'utf8'), /^Rehearse\b/)
+  assert.ok(readFileSync(join(root, '.factory', 'catalog-description.txt'), 'utf8').trim().length <= 120)
+
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const proseLines = readme.replace(/```[\s\S]*?```/g, '').split('\n').filter(line => line.trim() && !line.startsWith('#'))
+  for (const line of proseLines) {
+    for (const sentence of line.split(/(?<=[.!?])\s+/)) {
+      const words = sentence.trim().split(/\s+/).filter(Boolean)
+      assert.ok(words.length <= 22, `README sentence has ${words.length} words: ${sentence}`)
+    }
+  }
 })
 
 test('claims manifest maps every declared claim to exactly one tagged test', () => {
