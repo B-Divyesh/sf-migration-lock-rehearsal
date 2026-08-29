@@ -1,60 +1,36 @@
-# Handoff — independent verification 5
+# Handoff — adversarial first-read review 1
 
-## Release status
+## Result
 
-**PASS — candidate accepted.**
+**FAIL.** The full review is in `.factory/review-1.md`.
 
-- Candidate: `501229c57c286192d870877186ac6825b52fd7d4`
-- Live: https://migration-lock-rehearsal.sociobot.in
-- Verified: 2026-08-28 UTC
-- Full report: `.factory/verification-5.md`
+The live first screen clearly states what the CLI does, who it is for, and the first sample action. The one-click demo shows realistic data, the main routes and accessibility checks pass, browser storage remains empty, and all 14 declared claim commands pass from a fresh clone. Seven blocking findings remain, led by the missing install/distribution path, no-op browser demo reset, unverified real-container behavior, unlisted rewrite, price, and refund claims, and the unresolved 404 metadata issue from the earlier handoff.
 
-The live site byte-matches the candidate production build. The cold first-read,
-one-click sample demo, all 14 mandatory claim commands, full test/build/lint
-suite, clean crate package/install, installed CLI boundary cases, desktop and
-390 px browser checks, 200% text reflow, keyboard use, axe, privacy, response
-headers, caching, Lighthouse, hosted checkout, and API rate limiting pass.
-
-## Verification summary
-
-```text
-npm ci                    PASS — 20 packages; 0 vulnerabilities
-14 exact claim commands   PASS — 14/14 after locked install
-npm test                  PASS — 8 Rust + 16 Node/browser tests
-npm run typecheck         PASS
-npm run lint              PASS — rustfmt + clippy -D warnings
-npm run build             PASS — dist/site
-cargo build --release     PASS
-cargo package             PASS — 18 files; 62.5/16.0 KiB
-clean packaged install    PASS — help, version, Postgres/ClickHouse demos, boundaries
-verify:url local/live     PASS
-live identity             PASS — eight artifacts byte-identical
-live checkout             PASS — 303 to checkout.dodopayments.com
-verify rate limit         PASS — 30 allowed; request 31 = 429; Retry-After: 2
-```
-
-Fresh mobile Lighthouse scored 100 performance, 100 accessibility, 100 best
-practices, and 100 SEO. LCP was 1.48 s, TBT 12 ms, CLS 0, and transfer 116,555
-bytes. Initial JS is 12.25 kB raw / 4.80 kB gzip; CSS is 6.51 kB raw / 2.19 kB
-gzip; the hero is 107.87 kB.
-
-## Known gaps
-
-This worker has no Docker, Podman, Nerdctl, or Docker socket, so it could not run
-a real Postgres or ClickHouse container. Deterministic process integration
-passed for both engines and all safety-critical stages. The standalone 404 page
-also has a non-blocking metadata polish issue: no apple-touch-icon link and
-different canonical/Open Graph 404 URLs.
-
-## Re-run
+## Verification performed
 
 ```sh
+# Fresh clone at 62ca9640c4912fb02a61c41fddd32f6333da74a0
 npm ci
+# Each of the 14 exact test commands from .factory/claims.json
+
+# Current worktree
 npm test
 npm run typecheck
 npm run lint
 npm run build
 cargo build --release
-cargo package
 npm run verify:url -- https://migration-lock-rehearsal.sociobot.in
 ```
+
+All commands above passed. `dist/site/` was produced; initial JavaScript is 12.25 kB raw / 4.80 kB gzip. Fresh Playwright contexts covered 390 × 844 and 1440 × 900, route metadata, internal-link crawl, history/focus, demo storage and requests, unknown-route status, and axe.
+
+## Files changed
+
+- `.factory/review-1.md` — full adversarial review, findings, claim evidence, history check, and complete landing/README copy audit.
+- `.factory/handoff.md` — this review handoff.
+
+No product code was modified.
+
+## Known verification limit
+
+This worker has no Docker-compatible runtime or socket. The repository’s Docker claims passed only against its deterministic command double; real Postgres and ClickHouse integration remains unverified and is blocking finding F-1-3.
