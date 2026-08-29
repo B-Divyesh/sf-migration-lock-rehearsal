@@ -23,7 +23,7 @@
 | The rehearsal has no database URL option. | 7 | — |
 | It runs your SQL in the new container it creates. | 10 | — |
 | Results are estimates. | 3 | — |
-| A failed command or exceeded limit writes NO-GO. | 8 | — |
+| A failed Docker command or exceeded limit writes NO-GO. | 9 | — |
 | Install and rehearse | 3 | — |
 | Get the source on GitHub. | 5 | — |
 | Docker must be running. | 4 | — |

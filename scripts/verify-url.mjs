@@ -13,7 +13,7 @@ try {
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
     page.on('pageerror', error => errors.push(error.message))
 
-    for (const path of ['/', '/demo', '/privacy', '/terms']) {
+    for (const path of ['/', '/demo', '/privacy', '/terms', '/404.html']) {
       const response = await page.goto(base + path, { waitUntil: 'networkidle' })
       assert.equal(response?.status(), 200, `${path} status`)
       assert.equal(await page.locator('html').getAttribute('lang'), 'en', `${path} lang`)

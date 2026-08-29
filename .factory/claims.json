@@ -85,24 +85,24 @@
   },
   {
     "id": "failed-command-no-go",
-    "claim": "A failed workload, measurement, or migration command writes a NO-GO report and runbook and exits non-zero.",
+    "claim": "A failed Docker command at any rehearsal stage writes a NO-GO report and runbook and exits non-zero.",
     "where": "landing limits section, README, CLI help",
     "test": "npm test -- --test-name-pattern @claim:failed-command-no-go",
-    "sandbox": "deterministic Docker command double fails each stage for both engines, including a workload that fails after migration; assert non-zero exit, NO-GO JSON stdout/file, failure stage, null missing measurement, and recovery runbook"
+    "sandbox": "deterministic Docker command double fails startup, container start, setup, copy, fixture, workload, measurement, and migration for both engines; assert non-zero exit, NO-GO JSON stdout/file, failure stage, null missing measurement, recovery runbook, and cleanup after a container was named"
   },
   {
     "id": "child-deadlines",
-    "claim": "A migration or workload that exceeds the configured statement deadline is terminated, writes a NO-GO report and runbook, and removes its disposable container.",
+    "claim": "A migration, workload, or rollback command that exceeds the configured statement deadline is terminated, writes a NO-GO report and runbook, and removes its disposable container.",
     "where": "README, CLI help",
     "test": "npm test -- --test-name-pattern @claim:child-deadlines",
-    "sandbox": "deterministic Docker command double leaves each child active; run both engines with a 10 ms deadline and assert a non-zero exit, NO-GO JSON/stdout/runbook, timeout stage, and docker rm -f"
+    "sandbox": "deterministic Docker command double leaves each active migration, workload, or rollback command open; run both engines with a 10 ms deadline and assert a non-zero exit, NO-GO JSON/stdout/runbook, timeout stage, and docker rm -f"
   },
   {
     "id": "interruption-cleanup",
-    "claim": "SIGINT or SIGTERM during a rehearsal terminates active children, writes a NO-GO report, and removes the disposable container.",
+    "claim": "SIGINT or SIGTERM during a rehearsal terminates active migration, workload, or rollback commands, writes a NO-GO report, and removes the disposable container.",
     "where": "README, CLI help",
     "test": "npm test -- --test-name-pattern @claim:interruption-cleanup",
-    "sandbox": "deterministic hanging migration; send SIGTERM to the release CLI after migration starts, then assert non-zero exit, interrupted NO-GO report, and docker rm -f"
+    "sandbox": "deterministic hanging migration and rollback commands; send SIGINT and SIGTERM to the release CLI for both engines after each starts, then assert non-zero exit, NO-GO report, failure stage, and docker rm -f"
   },
   {
     "id": "threshold-verdict",
@@ -120,10 +120,10 @@
   },
   {
     "id": "paid-license",
-    "claim": "The hosted checkout shows a $29 one-time operator license. A valid returned or pasted license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
+    "claim": "The hosted checkout shows a $29 one-time operator license. Terms name Sociobot/Dodo as merchant of record and refund handler. A valid returned or pasted license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
     "where": "landing paid tier, privacy, terms",
     "test": "npm test -- --test-name-pattern @claim:paid-license",
-    "sandbox": "one live Sociobot checkout request with redirect following disabled plus a fresh browser context with a recorded verification response; assert HTTP 303 to checkout.dodopayments.com, URL token stripping, namespaced storage, daily cache, paid checklist, restore, and removal"
+    "sandbox": "one live Sociobot checkout request with redirect following disabled plus a fresh browser context with a recorded verification response; assert HTTP 303 to checkout.dodopayments.com, $29 disclosure, terms merchant/refund disclosure, URL token stripping, namespaced storage, daily cache, paid checklist, restore, and removal"
   },
   {
     "id": "free-cli",

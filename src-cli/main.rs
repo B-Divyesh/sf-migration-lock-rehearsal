@@ -519,8 +519,8 @@ fn rehearse(o: &Opt) -> Result<(), String> {
         return rehearse_clickhouse(o);
     }
     validate_input_files(o)?;
-    if Command::new("docker").arg("version").output().is_err() {
-        return Err("Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled report".into());
+    if let Err(error) = docker_available() {
+        return write_failure_report(o, "postgres", "startup", &error, Measurements::default());
     }
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -528,7 +528,7 @@ fn rehearse(o: &Opt) -> Result<(), String> {
         .as_nanos();
     let name = format!("mlr-{id}");
     let cleanup = Cleanup(name.clone());
-    docker(&[
+    if let Err(error) = docker(&[
         "run",
         "-d",
         "--name",
@@ -538,7 +538,15 @@ fn rehearse(o: &Opt) -> Result<(), String> {
         "-e",
         "POSTGRES_DB=rehearsal",
         "postgres:16-alpine",
-    ])?;
+    ]) {
+        return write_failure_report(
+            o,
+            "postgres",
+            "container-start",
+            &error,
+            Measurements::default(),
+        );
+    }
     let mut ready = false;
     for _ in 0..30 {
         if psql(&name, &["-c", "SELECT 1"]).is_ok() {
@@ -548,22 +556,38 @@ fn rehearse(o: &Opt) -> Result<(), String> {
         std::thread::sleep(Duration::from_secs(1))
     }
     if !ready {
-        return Err("Postgres did not become ready; the disposable database was removed".into());
+        return write_failure_report(
+            o,
+            "postgres",
+            "readiness",
+            "Postgres did not become ready; the disposable database was removed",
+            Measurements::default(),
+        );
     }
-    docker(&["exec", &name, "mkdir", "-p", "/work"])?;
+    if let Err(error) = docker(&["exec", &name, "mkdir", "-p", "/work"]) {
+        return write_failure_report(o, "postgres", "setup", &error, Measurements::default());
+    }
     for (src, dst) in [
         (&o.fixture, "/work/fixture.sql"),
         (&o.migration, "/work/migration.sql"),
     ] {
-        docker(&["cp", src, &format!("{name}:{dst}")])?
+        if let Err(error) = docker(&["cp", src, &format!("{name}:{dst}")]) {
+            return write_failure_report(o, "postgres", "copy", &error, Measurements::default());
+        }
     }
     if !o.rollback.is_empty() {
-        docker(&["cp", &o.rollback, &format!("{name}:/work/rollback.sql")])?
+        if let Err(error) = docker(&["cp", &o.rollback, &format!("{name}:/work/rollback.sql")]) {
+            return write_failure_report(o, "postgres", "copy", &error, Measurements::default());
+        }
     }
     if !o.workload.is_empty() && Path::new(&o.workload).is_file() {
-        docker(&["cp", &o.workload, &format!("{name}:/work/workload.sql")])?
+        if let Err(error) = docker(&["cp", &o.workload, &format!("{name}:/work/workload.sql")]) {
+            return write_failure_report(o, "postgres", "copy", &error, Measurements::default());
+        }
     }
-    psql(&name, &["-v", "ON_ERROR_STOP=1", "-f", "/work/fixture.sql"])?;
+    if let Err(error) = psql(&name, &["-v", "ON_ERROR_STOP=1", "-f", "/work/fixture.sql"]) {
+        return write_failure_report(o, "postgres", "fixture", &error, Measurements::default());
+    }
     let mut measurements = Measurements::default();
     let before = match table_bytes(&name) {
         Ok(value) => value,
@@ -748,11 +772,37 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     let rolled = if o.rollback.is_empty() {
         false
     } else {
-        psql(
-            &name,
-            &["-v", "ON_ERROR_STOP=1", "-f", "/work/rollback.sql"],
-        )
-        .is_ok()
+        let mut rollback = match Command::new("docker")
+            .args([
+                "exec",
+                &name,
+                "psql",
+                "-U",
+                "postgres",
+                "-d",
+                "rehearsal",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-f",
+                "/work/rollback.sql",
+            ])
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                return write_failure_report(
+                    o,
+                    "postgres",
+                    "rollback",
+                    &format!("could not start rollback: {error}"),
+                    measurements,
+                )
+            }
+        };
+        if let Err(error) = finish_rollback(&mut rollback, o.max_statement_ms) {
+            return write_failure_report(o, "postgres", "rollback", &error, measurements);
+        }
+        true
     };
     drop(cleanup);
     write_report(
@@ -773,8 +823,8 @@ fn rehearse(o: &Opt) -> Result<(), String> {
 }
 fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
     validate_input_files(o)?;
-    if Command::new("docker").arg("version").output().is_err() {
-        return Err("Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled report".into());
+    if let Err(error) = docker_available() {
+        return write_failure_report(o, "clickhouse", "startup", &error, Measurements::default());
     }
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -782,13 +832,21 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
         .as_nanos();
     let name = format!("mlr-{id}");
     let cleanup = Cleanup(name.clone());
-    docker(&[
+    if let Err(error) = docker(&[
         "run",
         "-d",
         "--name",
         &name,
         "clickhouse/clickhouse-server:24.8-alpine",
-    ])?;
+    ]) {
+        return write_failure_report(
+            o,
+            "clickhouse",
+            "container-start",
+            &error,
+            Measurements::default(),
+        );
+    }
     let mut ready = false;
     for _ in 0..30 {
         if clickhouse(&name, "SELECT 1").is_ok() {
@@ -798,19 +856,33 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
         std::thread::sleep(Duration::from_secs(1));
     }
     if !ready {
-        return Err("ClickHouse did not become ready; the disposable database was removed".into());
+        return write_failure_report(
+            o,
+            "clickhouse",
+            "readiness",
+            "ClickHouse did not become ready; the disposable database was removed",
+            Measurements::default(),
+        );
     }
-    docker(&["exec", &name, "mkdir", "-p", "/work"])?;
+    if let Err(error) = docker(&["exec", &name, "mkdir", "-p", "/work"]) {
+        return write_failure_report(o, "clickhouse", "setup", &error, Measurements::default());
+    }
     for (src, dst) in [
         (&o.fixture, "/work/fixture.sql"),
         (&o.migration, "/work/migration.sql"),
     ] {
-        docker(&["cp", src, &format!("{name}:{dst}")])?
+        if let Err(error) = docker(&["cp", src, &format!("{name}:{dst}")]) {
+            return write_failure_report(o, "clickhouse", "copy", &error, Measurements::default());
+        }
     }
     if !o.rollback.is_empty() {
-        docker(&["cp", &o.rollback, &format!("{name}:/work/rollback.sql")])?
+        if let Err(error) = docker(&["cp", &o.rollback, &format!("{name}:/work/rollback.sql")]) {
+            return write_failure_report(o, "clickhouse", "copy", &error, Measurements::default());
+        }
     }
-    clickhouse_file(&name, "/work/fixture.sql")?;
+    if let Err(error) = clickhouse_file(&name, "/work/fixture.sql") {
+        return write_failure_report(o, "clickhouse", "fixture", &error, Measurements::default());
+    }
     let mut measurements = Measurements::default();
     let before = match clickhouse_bytes(&name) {
         Ok(value) => value,
@@ -820,7 +892,9 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
     };
     measurements.table_bytes_before = Some(before);
     let mut workload = if !o.workload.is_empty() {
-        docker(&["cp", &o.workload, &format!("{name}:/work/workload.sql")])?;
+        if let Err(error) = docker(&["cp", &o.workload, &format!("{name}:/work/workload.sql")]) {
+            return write_failure_report(o, "clickhouse", "copy", &error, measurements);
+        }
         match Command::new("docker")
             .args([
                 "exec",
@@ -987,7 +1061,35 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
         }
     };
     measurements.table_bytes_after = Some(after);
-    let rolled = !o.rollback.is_empty() && clickhouse_file(&name, "/work/rollback.sql").is_ok();
+    let rolled = if o.rollback.is_empty() {
+        false
+    } else {
+        let mut rollback = match Command::new("docker")
+            .args([
+                "exec",
+                &name,
+                "sh",
+                "-lc",
+                "clickhouse-client --multiquery < /work/rollback.sql",
+            ])
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                return write_failure_report(
+                    o,
+                    "clickhouse",
+                    "rollback",
+                    &format!("could not start rollback: {error}"),
+                    measurements,
+                )
+            }
+        };
+        if let Err(error) = finish_rollback(&mut rollback, o.max_statement_ms) {
+            return write_failure_report(o, "clickhouse", "rollback", &error, measurements);
+        }
+        true
+    };
     drop(cleanup);
     write_report(
         o,
@@ -1109,6 +1211,37 @@ fn finish_workload(
         std::thread::sleep(Duration::from_millis(25));
     }
 }
+
+fn finish_rollback(child: &mut Child, max_statement_ms: u128) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        if interruption_requested() {
+            terminate_child(child);
+            return Err("rehearsal interrupted; rollback was terminated".into());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "rollback failed with {}",
+                    status
+                        .code()
+                        .map_or_else(|| "a signal".into(), |code| format!("exit {code}"))
+                ))
+            }
+            Ok(None) if deadline_expired(started, max_statement_ms) => {
+                terminate_child(child);
+                return Err(deadline_message("rollback", max_statement_ms));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(error) => {
+                terminate_child(child);
+                return Err(format!("could not monitor rollback: {error}"));
+            }
+        }
+    }
+}
+
 struct Cleanup(String);
 impl Drop for Cleanup {
     fn drop(&mut self) {
@@ -1124,6 +1257,21 @@ fn docker(a: &[&str]) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("docker command failed: docker {}", a.join(" ")))
+    }
+}
+
+fn docker_available() -> Result<(), String> {
+    let status = Command::new("docker")
+        .arg("version")
+        .output()
+        .map_err(|_| {
+            "Docker is required. Install Docker, or use `mlr demo --dry-run` to inspect the bundled report"
+                .to_string()
+        })?;
+    if status.status.success() {
+        Ok(())
+    } else {
+        Err("docker command failed: docker version".into())
     }
 }
 fn psql(name: &str, a: &[&str]) -> Result<(), String> {
@@ -1435,7 +1583,7 @@ fn write_report(o: &Opt, r: Report) -> Result<(), String> {
     Ok(())
 }
 fn usage() {
-    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json] [LIMITS]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json] [LIMITS]\n  mlr guard DATABASE_URL\n\nLimits:\n  --max-statement-ms N          Default: {DEFAULT_MAX_STATEMENT_MS}\n  --max-lock-wait-ms N          Default: {DEFAULT_MAX_LOCK_WAIT_MS}\n  --max-table-growth-bytes N    Default: {DEFAULT_MAX_TABLE_GROWTH_BYTES}\n\nA failed command, rollback, expired migration/workload deadline, or exceeded limit writes NO-GO and exits non-zero. SIGINT and SIGTERM terminate active children, write NO-GO, and remove the disposable container. The URL guard accepts only exact loopback hosts. A rehearsal creates and removes its own disposable container.")
+    println!("Migration Lock Rehearsal {VERSION}\n\nRehearse supplied Postgres or ClickHouse migration SQL in a fresh Docker container.\n\nUsage:\n  mlr demo [--engine postgres|clickhouse] [--output DIR] [--dry-run] [--json] [LIMITS]\n  mlr demo --output DIR --reset\n  mlr rehearse --engine postgres|clickhouse --fixture FIXTURE.sql --migration CHANGE.sql [--rollback DOWN.sql] [--workload READ.sql] [--output DIR] [--json] [LIMITS]\n  mlr guard DATABASE_URL\n\nLimits:\n  --max-statement-ms N          Default: {DEFAULT_MAX_STATEMENT_MS}\n  --max-lock-wait-ms N          Default: {DEFAULT_MAX_LOCK_WAIT_MS}\n  --max-table-growth-bytes N    Default: {DEFAULT_MAX_TABLE_GROWTH_BYTES}\n\nA failed Docker command, rollback, expired migration/workload/rollback deadline, or exceeded limit writes NO-GO and exits non-zero. SIGINT and SIGTERM terminate active commands, write NO-GO, and remove the disposable container. The URL guard accepts only exact loopback hosts. A rehearsal creates and removes its own disposable container.")
 }
 #[cfg(test)]
 mod tests {

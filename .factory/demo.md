@@ -6,6 +6,6 @@ The browser recording reads `public/demo-recording.json`. It is a checked-in tra
 
 `mlr demo` starts a disposable Docker database. `mlr demo --dry-run` writes the same sample go/no-go report and runbook without Docker. `mlr demo --output ./mlr-demo --reset` removes only a marked directory created by an earlier demo. Reset refuses unmarked directories, roots, workspaces, home/current directories, aliases, and symlinks.
 
-The sample report applies the shipped limits: 30,000 ms statement time, 1,000 ms lock wait, and 104,857,600 bytes table growth. A failed workload, measurement, migration, or rollback writes `NO-GO`, records the failed stage, and exits non-zero. The JSON uses `null` when a measurement could not complete.
+The sample report applies the shipped limits: 30,000 ms statement time, 1,000 ms lock wait, and 104,857,600 bytes table growth. A failed Docker command at any rehearsal stage writes `NO-GO`, records the failed stage, and exits non-zero. The JSON uses `null` when a measurement could not complete.
 
 Sample data: `examples/postgres/fixture.sql`, `examples/postgres/add_customer_flag.sql`, `examples/postgres/rollback_customer_flag.sql`, and `examples/postgres/read_workload.sql`. It contains invented account names and no production connection details.

@@ -25,7 +25,7 @@ function assertSuccess(result) {
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
 }
 
-function makeFakeDocker({ failMigration = false, failRollback = false, failWorkload = false, delayWorkloadFailure = false, failMeasurement = false, highLock = false, highTable = false, hangMigration = false, hangWorkload = false, fastMigration = false } = {}) {
+function makeFakeDocker({ failVersion = false, failStart = false, failSetup = false, failCopy = false, failFixture = false, failMigration = false, failRollback = false, failWorkload = false, delayWorkloadFailure = false, failMeasurement = false, highLock = false, highTable = false, hangMigration = false, hangWorkload = false, hangRollback = false, fastMigration = false, fastWorkload = false } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), 'mlr-docker-'))
   const bin = join(sandbox, 'bin')
   const state = join(sandbox, 'state')
@@ -34,6 +34,10 @@ function makeFakeDocker({ failMigration = false, failRollback = false, failWorkl
   writeFileSync(docker, `#!/bin/sh
 set -eu
 printf '%s\\n' "$*" >> "$MLR_FAKE_LOG"
+test "\${MLR_FAIL_VERSION:-0}" = 1 && test "\${1:-}" = version && exit 17
+test "\${MLR_FAIL_START:-0}" = 1 && test "\${1:-}" = run && exit 17
+test "\${MLR_FAIL_SETUP:-0}" = 1 && case "$*" in *"mkdir -p /work"*) exit 17 ;; esac
+test "\${MLR_FAIL_COPY:-0}" = 1 && test "\${1:-}" = cp && exit 17
 if test "\${1:-}" = cp; then
   case "\${2:-}" in
     *fixture.sql) grep -q '@example.test' "$2" && touch "$MLR_FAKE_STATE/invented-fixture" ;;
@@ -63,6 +67,7 @@ case "$*" in
   *"/work/workload.sql"*)
     touch "$MLR_FAKE_STATE/workload-running"
     test "\${MLR_HANG_WORKLOAD:-0}" = 1 && exec sleep 60
+    test "\${MLR_FAST_WORKLOAD:-0}" = 1 && exit 0
     if test "\${MLR_FAIL_WORKLOAD:-0}" = 1; then test "\${MLR_DELAY_WORKLOAD_FAILURE:-0}" = 0 || sleep 0.35; exit 19; fi
     exec sleep 1 ;;
   *"/work/migration.sql"*)
@@ -73,7 +78,8 @@ case "$*" in
     sleep 0.12
     test "\${MLR_FAIL_MIGRATION:-0}" = 1 && exit 1
     exit 0 ;;
-  *"/work/rollback.sql"*) test "\${MLR_FAIL_ROLLBACK:-0}" = 1 && exit 1; exit 0 ;;
+  *"/work/rollback.sql"*) test "\${MLR_HANG_ROLLBACK:-0}" = 1 && exec sleep 60; test "\${MLR_FAIL_ROLLBACK:-0}" = 1 && exit 1; exit 0 ;;
+  *"/work/fixture.sql"*) test "\${MLR_FAIL_FIXTURE:-0}" = 1 && exit 1; exit 0 ;;
 esac
 exit 0
 `)
@@ -87,6 +93,11 @@ exit 0
       PATH: `${bin}:${process.env.PATH}`,
       MLR_FAKE_LOG: join(state, 'docker.log'),
       MLR_FAKE_STATE: state,
+      MLR_FAIL_VERSION: failVersion ? '1' : '0',
+      MLR_FAIL_START: failStart ? '1' : '0',
+      MLR_FAIL_SETUP: failSetup ? '1' : '0',
+      MLR_FAIL_COPY: failCopy ? '1' : '0',
+      MLR_FAIL_FIXTURE: failFixture ? '1' : '0',
       MLR_FAIL_MIGRATION: failMigration ? '1' : '0',
       MLR_FAIL_ROLLBACK: failRollback ? '1' : '0',
       MLR_FAIL_WORKLOAD: failWorkload ? '1' : '0',
@@ -96,14 +107,20 @@ exit 0
       MLR_HIGH_TABLE: highTable ? '1' : '0',
       MLR_HANG_MIGRATION: hangMigration ? '1' : '0',
       MLR_HANG_WORKLOAD: hangWorkload ? '1' : '0',
+      MLR_HANG_ROLLBACK: hangRollback ? '1' : '0',
       MLR_FAST_MIGRATION: fastMigration ? '1' : '0',
+      MLR_FAST_WORKLOAD: fastWorkload ? '1' : '0',
     },
   }
 }
 
-test('@claim:child-deadlines blocked migration and workload children write NO-GO artifacts and clean up', () => {
+test('@claim:child-deadlines blocked migration, workload, and rollback commands write NO-GO artifacts and clean up', () => {
   for (const engine of ['postgres', 'clickhouse']) {
-    for (const [child, options] of [['migration', { hangMigration: true }], ['workload', { hangWorkload: true, fastMigration: true }]]) {
+    for (const [child, options] of [
+      ['migration', { hangMigration: true }],
+      ['workload', { hangWorkload: true, fastMigration: true }],
+      ['rollback', { hangRollback: true, fastMigration: true, fastWorkload: true }],
+    ]) {
       const fake = makeFakeDocker(options)
       const output = join(fake.sandbox, `${engine}-${child}-deadline`)
       try {
@@ -123,24 +140,31 @@ test('@claim:child-deadlines blocked migration and workload children write NO-GO
   }
 })
 
-test('@claim:interruption-cleanup SIGINT and SIGTERM write NO-GO and remove the disposable container', async () => {
+test('@claim:interruption-cleanup SIGINT and SIGTERM terminate active commands, write NO-GO, and remove the disposable container', async () => {
   for (const requestedSignal of ['SIGINT', 'SIGTERM']) {
-    const fake = makeFakeDocker({ hangMigration: true })
-    const output = join(fake.sandbox, `interrupted-${requestedSignal}`)
-    try {
-      const child = spawn(cli, ['demo', '--output', output, '--max-statement-ms', '10000'], { cwd: fake.sandbox, env: fake.env, stdio: 'pipe' })
-      for (let attempt = 0; attempt < 100 && !existsSync(fake.log); attempt += 1) await new Promise(resolve => setTimeout(resolve, 10))
-      for (let attempt = 0; attempt < 100 && !readFileSync(fake.log, 'utf8').includes('/work/migration.sql'); attempt += 1) await new Promise(resolve => setTimeout(resolve, 10))
-      child.kill(requestedSignal)
-      const [code, signal] = await once(child, 'exit')
-      assert.equal(signal, null)
-      assert.notEqual(code, 0)
-      const report = JSON.parse(readFileSync(join(output, 'report.json'), 'utf8'))
-      assert.equal(report.verdict, 'NO-GO')
-      assert.equal(report.failure_stage, 'interrupted')
-      assert.match(report.failure, /migration and workload were terminated/)
-      assert.match(readFileSync(fake.log, 'utf8'), /rm -f mlr-[0-9]+/)
-    } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
+    for (const engine of ['postgres', 'clickhouse']) {
+      for (const scenario of [
+        { name: 'migration', marker: /^exec .*\/work\/migration\.sql/m, options: { hangMigration: true }, failureStage: 'interrupted', failure: /migration and workload were terminated/ },
+        { name: 'rollback', marker: /^exec .*\/work\/rollback\.sql/m, options: { hangRollback: true, fastMigration: true, fastWorkload: true }, failureStage: 'rollback', failure: /rollback was terminated/ },
+      ]) {
+        const fake = makeFakeDocker(scenario.options)
+        const output = join(fake.sandbox, `interrupted-${engine}-${scenario.name}-${requestedSignal}`)
+        try {
+          const child = spawn(cli, ['demo', '--engine', engine, '--output', output, '--max-statement-ms', '10000'], { cwd: fake.sandbox, env: fake.env, stdio: 'pipe' })
+          for (let attempt = 0; attempt < 100 && !existsSync(fake.log); attempt += 1) await new Promise(resolve => setTimeout(resolve, 10))
+          for (let attempt = 0; attempt < 100 && !scenario.marker.test(readFileSync(fake.log, 'utf8')); attempt += 1) await new Promise(resolve => setTimeout(resolve, 10))
+          child.kill(requestedSignal)
+          const [code, signal] = await once(child, 'exit')
+          assert.equal(signal, null)
+          assert.notEqual(code, 0)
+          const report = JSON.parse(readFileSync(join(output, 'report.json'), 'utf8'))
+          assert.equal(report.verdict, 'NO-GO')
+          assert.equal(report.failure_stage, scenario.failureStage)
+          assert.match(report.failure, scenario.failure)
+          assert.match(readFileSync(fake.log, 'utf8'), /rm -f mlr-[0-9]+/)
+        } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
+      }
+    }
   }
 })
 
@@ -418,7 +442,7 @@ test('390px navigation reflows at 200% text and first-screen facts name local, o
     try {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
       const page = await context.newPage()
-      for (const path of ['/', '/demo', '/privacy', '/terms']) {
+      for (const path of ['/', '/demo', '/privacy', '/terms', '/404.html']) {
         await page.goto(origin + path, { waitUntil: 'networkidle' })
         await page.addStyleTag({ content: ':root { font-size: 200% !important; }' })
         const geometry = await page.evaluate(() => ({
@@ -487,6 +511,9 @@ test('@claim:paid-license live checkout redirects and returned or restored licen
       await page.getByText('License active.', { exact: true }).waitFor()
       assert.equal(verifyRequests, 2)
       assert.equal(await page.evaluate(() => localStorage.getItem('sb_license:migration-lock-rehearsal')), 'restored-token')
+      await page.goto(origin + '/terms')
+      await page.getByText(/Sociobot\/Dodo is the merchant of record/).waitFor()
+      await page.getByText(/Refunds are handled by Sociobot\/Dodo through the hosted checkout/).waitFor()
       await context.close()
     } finally { await browser.close() }
   })
@@ -659,9 +686,14 @@ test('@claim:container-cleanup real Docker rehearsals leave no disposable contai
   }
 })
 
-test('@claim:failed-command-no-go failed workload, measurement, and migration commands write NO-GO artifacts', () => {
+test('@claim:failed-command-no-go failed rehearsal commands write NO-GO artifacts', () => {
   for (const engine of ['postgres', 'clickhouse']) {
     for (const scenario of [
+      { name: 'startup', stage: 'startup', options: { failVersion: true } },
+      { name: 'container-start', stage: 'container-start', options: { failStart: true }, cleanup: true },
+      { name: 'setup', stage: 'setup', options: { failSetup: true }, cleanup: true },
+      { name: 'copy', stage: 'copy', options: { failCopy: true }, cleanup: true },
+      { name: 'fixture', stage: 'fixture', options: { failFixture: true }, cleanup: true },
       { name: 'workload', stage: 'workload', options: { failWorkload: true } },
       { name: 'workload-delayed', stage: 'workload', options: { failWorkload: true, delayWorkloadFailure: true } },
       { name: 'measurement', stage: 'measurement', options: { failMeasurement: true } },
@@ -683,6 +715,7 @@ test('@claim:failed-command-no-go failed workload, measurement, and migration co
           assert.equal(fileReport.table_bytes_before, null)
           assert.doesNotMatch(fileReport.failure, /recorded.*zero/i)
         }
+        if (scenario.cleanup) assert.match(readFileSync(fake.log, 'utf8'), /rm -f mlr-[0-9]+/)
       } finally { rmSync(fake.sandbox, { recursive: true, force: true }) }
     }
   }

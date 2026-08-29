@@ -9,10 +9,10 @@ header, main, footer { width:min(1180px,100%); margin:auto; padding-inline:24px;
 header { min-height:76px; display:flex; align-items:center; justify-content:space-between; border-bottom:3px solid var(--ink); }
 .wordmark { display:inline-flex; align-items:center; min-height:44px; font:900 26px 'Arial Black',Impact,sans-serif; text-decoration:none; }
 .wordmark span { color:var(--orange); }
-nav { display:flex; gap:8px; font-weight:700; }
+nav { display:flex; flex-wrap:wrap; gap:8px; font-weight:700; }
 nav a, footer a { display:inline-flex; align-items:center; min-height:44px; padding-inline:8px; }
 main { min-height:62vh; padding-top:12vh; padding-bottom:12vh; }
 h1 { max-width:12ch; font:900 clamp(42px,10vw,72px)/.95 Impact,Arial,sans-serif; margin:0 0 20px; }
 .button { display:inline-flex; align-items:center; min-height:46px; background:var(--orange); border:3px solid var(--ink); padding:10px 16px; font-weight:bold; box-shadow:5px 5px var(--ink); text-decoration:none; }
 footer { border-top:3px solid var(--ink); padding-top:22px; padding-bottom:30px; display:flex; justify-content:space-between; gap:20px; font-size:.86rem; }
-@media(max-width:650px) { header { align-items:flex-start; padding-top:14px; padding-bottom:14px; } nav { font-size:.9rem; } footer { display:block; } }
+@media(max-width:650px) { header { align-items:flex-start; flex-wrap:wrap; padding-top:14px; padding-bottom:14px; } nav { width:100%; font-size:.9rem; } footer { display:block; } }

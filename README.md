@@ -2,7 +2,7 @@
 
 Rehearse a database migration before production.
 
-Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a go/no-go report before a migration. It starts a fresh Docker database and loads your fixture. It runs the migration with an optional workload. It checks rollback SQL and writes a go/no-go report. Failed commands, failed rollback, and exceeded limits are always **NO-GO**. Its URL guard accepts exact loopback hosts only.
+Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a go/no-go report before a migration. It starts a fresh Docker database and loads your fixture. It runs the migration with an optional workload. It checks rollback SQL and writes a go/no-go report. A failed Docker command, failed rollback, or exceeded limit is always **NO-GO**. Its URL guard accepts exact loopback hosts only.
 
 The static documentation site lives at `https://migration-lock-rehearsal.sociobot.in`.
 
@@ -45,9 +45,9 @@ cargo run -- rehearse \
 ```
 
 Read `./rehearsal-report/report.json` in automation and `./rehearsal-report/runbook.md` during the change review.
-When a workload, measurement, migration, or rollback command fails, the report is **NO-GO**. The CLI writes both files with the failed stage and recovery step, then exits non-zero. Missing measurements are `null`, never zero.
+When any Docker command in a rehearsal fails, the report is **NO-GO**. The CLI writes both files with the failed stage and recovery step, then exits non-zero. Missing measurements are `null`, never zero.
 
-Each migration and workload child must finish within `--max-statement-ms`. On expiry, the CLI terminates active children, writes **NO-GO**, and removes the disposable container. SIGINT and SIGTERM follow the same recovery path.
+Each migration, workload, and rollback command must finish within `--max-statement-ms`. On expiry, the CLI terminates the active command, writes **NO-GO**, and removes the disposable container. SIGINT and SIGTERM follow the same recovery path.
 
 Use `--engine clickhouse` with a ClickHouse fixture and migration. Both engines run the workload while the migration executes. They record statement time, lock waits, table bytes, table growth, and rollback status. Results are estimates from a new container. Use a production-shaped sanitized fixture before relying on them. The rehearsal command has no database URL option.
 
@@ -89,7 +89,7 @@ Without a license action, the site makes only same-origin requests and stores no
 
 The optional operator license costs $29 once. It adds the browser-based operator review checklist. CLI reports and safety checks do not require a license.
 
-Purchase uses Sociobot’s hosted checkout. A returned or pasted token is stored under `sb_license:migration-lock-rehearsal`, sent only to `api.sociobot.in`, and verified at most once daily. Use **Remove saved license** to delete it.
+Purchase uses Sociobot’s hosted checkout. Sociobot/Dodo is the merchant of record, and refunds are handled there. A returned or pasted token is stored under `sb_license:migration-lock-rehearsal`, sent only to `api.sociobot.in`, and verified at most once daily. Use **Remove saved license** to delete it.
 
 ## License
 
