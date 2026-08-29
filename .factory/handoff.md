@@ -54,7 +54,9 @@ cargo package --locked --allow-dirty
 Results:
 
 - `npm test`: 24 tests total; 22 passed and two Docker-only real-container
-  claims skipped locally because this worker has no `docker` executable.
+  claims skipped locally because this worker has no `docker` executable. Every
+  one of the 19 commands in `.factory/claims.json` was then invoked separately:
+  17 passed and the same two Docker-only commands skipped as documented.
 - `npm run typecheck`, `npm run lint`, and `npm run build`: passed. Static
   output is in `dist/site/`; initial JS is 5.10 KiB gzip and CSS is 2.23 KiB
   gzip.
