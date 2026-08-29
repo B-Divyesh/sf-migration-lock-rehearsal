@@ -563,6 +563,19 @@ test('@claim:container-cleanup real Docker rehearsals leave no disposable contai
   const parent = mkdtempSync(join(tmpdir(), 'mlr-cleanup-live-'))
   try {
     assertSuccess(runCli(['demo', '--output', join(parent, 'postgres')], { cwd: parent }))
+    const brokenMigration = join(parent, 'broken.sql')
+    writeFileSync(brokenMigration, 'THIS IS NOT VALID SQL;\n')
+    const failed = runCli([
+      'rehearse', '--engine', 'postgres',
+      '--fixture', join(root, 'examples', 'postgres', 'fixture.sql'),
+      '--migration', brokenMigration,
+      '--rollback', join(root, 'examples', 'postgres', 'rollback_customer_flag.sql'),
+      '--output', join(parent, 'failed-postgres'),
+    ], { cwd: parent })
+    assert.notEqual(failed.status, 0)
+    for (const output of [join(parent, 'postgres'), join(parent, 'failed-postgres')]) {
+      assert.ok(existsSync(join(output, 'report.json')), output)
+    }
     const remaining = spawnSync('docker', ['ps', '-a', '--filter', 'name=mlr-', '--format', '{{.Names}}'], { encoding: 'utf8' })
     assert.equal(remaining.stdout.trim(), '', `left disposable containers: ${remaining.stdout}`)
   } finally {

@@ -510,6 +510,7 @@ fn rehearse(o: &Opt) -> Result<(), String> {
     if !ready {
         return Err("Postgres did not become ready; the disposable database was removed".into());
     }
+    docker(&["exec", &name, "mkdir", "-p", "/work"])?;
     for (src, dst) in [
         (&o.fixture, "/work/fixture.sql"),
         (&o.migration, "/work/migration.sql"),
@@ -715,6 +716,7 @@ fn rehearse_clickhouse(o: &Opt) -> Result<(), String> {
     if !ready {
         return Err("ClickHouse did not become ready; the disposable database was removed".into());
     }
+    docker(&["exec", &name, "mkdir", "-p", "/work"])?;
     for (src, dst) in [
         (&o.fixture, "/work/fixture.sql"),
         (&o.migration, "/work/migration.sql"),
