@@ -219,6 +219,22 @@ test('@claim:demo-recording browser recording names output from the release CLI 
   } finally { rmSync(parent, { recursive: true, force: true }) }
 })
 
+test('product copy uses one name for the JSON decision document', () => {
+  const productionCopy = [
+    'README.md',
+    'src/main.ts',
+    'demo/index.html',
+    'public/404.html',
+  ].map(path => readFileSync(join(root, path), 'utf8')).join('\n')
+
+  for (const rejected of ['migration report', 'migration card', 'schema change', 'go/no-go card', 'rehearsal card', 'JSON card', 'measured report']) {
+    assert.doesNotMatch(productionCopy, new RegExp(rejected, 'i'), `retired term returned: ${rejected}`)
+  }
+  assert.match(readFileSync(join(root, 'src/main.ts'), 'utf8'), /Read a sample go\/no-go report/)
+  assert.match(readFileSync(join(root, 'public/404.html'), 'utf8'), /Migration Lock Rehearsal page/)
+  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /go\/no-go report before a migration/)
+})
+
 test('@claim:site-private static site stays same-origin and stores no visitor data', async () => {
   await withSite(async origin => {
     const browser = await chromium.launch({ headless: true })

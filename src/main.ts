@@ -36,7 +36,7 @@ function landing() {
 }
 
 function demo() {
-  return shell('<section class="page-head"><p class="eyebrow">SAMPLE SANDBOX</p><h1>Read a sample migration report</h1><p class="lead">This preview uses invented customer records and does not save anything.</p><p class="action-row"><button class="button primary" id="reset-demo">Reset demo</button><a class="button" href="/#install">Install the CLI</a></p></section><div class="demo-banner" role="status">Demo — sample data, nothing is saved <span id="demo-status" class="sr-only" aria-live="polite"></span></div>' + terminal(true) + '<section class="report" aria-labelledby="report-title"><h2 id="report-title">Go/no-go report</h2><dl><div><dt>Engine</dt><dd>Postgres 16</dd></div><div><dt>Statement time</dt><dd>184 / 30,000 ms</dd></div><div><dt>Lock wait</dt><dd>0 / 1,000 ms</dd></div><div><dt>Table growth</dt><dd>8,192 / 104,857,600 bytes</dd></div><div><dt>Rollback</dt><dd>Checked</dd></div><div><dt>Verdict</dt><dd>GO</dd></div></dl><p><b>Estimate only.</b> Rehearse against a sanitized, production-shaped fixture before deployment.</p></section>')
+  return shell('<section class="page-head"><p class="eyebrow">SAMPLE SANDBOX</p><h1>Read a sample go/no-go report</h1><p class="lead">This preview uses invented customer records and does not save anything.</p><p class="action-row"><button class="button primary" id="reset-demo">Reset demo</button><a class="button" href="/#install">Install the CLI</a></p></section><div class="demo-banner" role="status">Demo — sample data, nothing is saved <span id="demo-status" class="sr-only" aria-live="polite"></span></div>' + terminal(true) + '<section class="report" aria-labelledby="report-title"><h2 id="report-title">Go/no-go report</h2><dl><div><dt>Engine</dt><dd>Postgres 16</dd></div><div><dt>Statement time</dt><dd>184 / 30,000 ms</dd></div><div><dt>Lock wait</dt><dd>0 / 1,000 ms</dd></div><div><dt>Table growth</dt><dd>8,192 / 104,857,600 bytes</dd></div><div><dt>Rollback</dt><dd>Checked</dd></div><div><dt>Verdict</dt><dd>GO</dd></div></dl><p><b>Estimate only.</b> Rehearse against a sanitized, production-shaped fixture before deployment.</p></section>')
 }
 
 function legal(kind: 'privacy' | 'terms') {
@@ -47,12 +47,12 @@ function legal(kind: 'privacy' | 'terms') {
 }
 
 function notFound() {
-  return shell('<section class="page-head not-found"><p class="eyebrow">404 / ROUTE NOT FOUND</p><h1>Find the rehearsal page</h1><p class="lead">That address does not point to a migration card.</p><a class="button primary" href="/">Return home</a></section>')
+  return shell('<section class="page-head not-found"><p class="eyebrow">404 / ROUTE NOT FOUND</p><h1>Find the rehearsal page</h1><p class="lead">That address does not point to a Migration Lock Rehearsal page.</p><a class="button primary" href="/">Return home</a></section>')
 }
 
 const routeMetadata: Record<string, { title: string; description: string }> = {
   '/': { title: 'Migration Lock Rehearsal — Test database changes', description: 'Rehearse a Postgres or ClickHouse migration and write a measured go/no-go report before production.' },
-  '/demo': { title: 'Demo — Migration Lock Rehearsal', description: 'Read the bundled sample migration report with statement, lock, table growth, and rollback limits.' },
+  '/demo': { title: 'Demo — Migration Lock Rehearsal', description: 'Read the bundled sample go/no-go report with statement, lock, table growth, and rollback limits.' },
   '/privacy': { title: 'Privacy — Migration Lock Rehearsal', description: 'Learn what the local CLI writes and how optional operator license verification handles its token.' },
   '/terms': { title: 'Terms — Migration Lock Rehearsal', description: 'Read the terms for migration rehearsals and the one-time operator license.' },
   '/404': { title: 'Not found — Migration Lock Rehearsal', description: 'Return to the Migration Lock Rehearsal documentation.' },

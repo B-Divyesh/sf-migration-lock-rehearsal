@@ -1,1 +1,1 @@
-Rehearse Postgres and ClickHouse migrations before production.
+Rehearse Postgres and ClickHouse migrations before release.

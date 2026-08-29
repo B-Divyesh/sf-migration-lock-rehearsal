@@ -37,6 +37,9 @@
 | Have a license? Paste it. | 5 | — |
 | The token stays in this browser and goes only to Sociobot for verification. | 13 | — |
 | Read privacy and terms. | 4 | — |
+| Read a sample go/no-go report. | 6 | — |
+| This preview uses invented customer records and does not save anything. | 11 | — |
+| That address does not point to a Migration Lock Rehearsal page. | 11 | — |
 
 No landing sentence exceeds 22 words. No banned terms appear.
 
@@ -53,3 +56,5 @@ No landing sentence exceeds 22 words. No banned terms appear.
 | Decision boundary | limit |
 | Paid browser content | operator review checklist |
 | Purchase proof | license |
+
+The regression test `product copy uses one name for the JSON decision document` rejects “migration report”, “migration card”, “schema change”, and earlier retired output names in production copy.

@@ -2,7 +2,7 @@
 
 Rehearse a database migration before production.
 
-Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a go/no-go report before a schema change. It starts a fresh Docker database and loads your fixture. It runs the migration with an optional workload. It checks rollback SQL and writes a measured report. Failed commands, failed rollback, and exceeded limits are always **NO-GO**. Its URL guard accepts exact loopback hosts only.
+Migration Lock Rehearsal is for Postgres or ClickHouse maintainers who need a go/no-go report before a migration. It starts a fresh Docker database and loads your fixture. It runs the migration with an optional workload. It checks rollback SQL and writes a go/no-go report. Failed commands, failed rollback, and exceeded limits are always **NO-GO**. Its URL guard accepts exact loopback hosts only.
 
 The static documentation site lives at `https://migration-lock-rehearsal.sociobot.in`.
 
