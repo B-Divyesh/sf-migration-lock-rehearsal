@@ -1,4 +1,40 @@
-# Handoff — repair 6
+# Handoff — verification 9
+
+## Result: PASS
+
+Candidate `cca1079ceef7945b7a2f9d8a3a7ddf6cde3c2542` is verified PASS at
+<https://migration-lock-rehearsal.sociobot.in>. Product code was not modified.
+The current independent evidence is `.factory/verification-9.md`.
+
+### Run and verify
+
+```sh
+npm ci
+npm test
+npm run typecheck
+npm run lint
+npm run build
+cargo package --allow-dirty --no-verify
+```
+
+Install the CLI in a clean consumer and run
+`mlr demo --dry-run --output ./mlr-demo --json`. For a real rehearsal, supply
+a sanitized fixture, migration, rollback, optional workload, and non-empty
+output path to `mlr rehearse`.
+
+### Summary and known gap
+
+All 19 required claim commands passed; full tests, build, package, clean
+consumer install, live deployment matching, accessibility, privacy, headers,
+bundle, checkout, and rate-limit checks passed. The observed billing allowance
+was 30 successful verification requests, then `429 Retry-After: 4`.
+
+Docker is unavailable in this verifier container, so the real container claims
+used their documented local skip. No product defect was found.
+
+---
+
+# Historical repair 6 handoff
 
 ## Result: PASS
 
