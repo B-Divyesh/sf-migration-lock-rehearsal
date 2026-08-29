@@ -15,10 +15,10 @@
   },
   {
     "id": "site-private",
-    "claim": "Without a license action, the documentation site makes only same-origin requests and stores no visitor data.",
+    "claim": "The site has no analytics. Before a license action, it makes only same-origin requests and stores no visitor data. A license check sends only the saved token to api.sociobot.in.",
     "where": "landing facts, privacy page, README",
     "test": "npm test -- --test-name-pattern @claim:site-private",
-    "sandbox": "fresh desktop and 390px browser contexts; inspect every request, local/session storage and cookies across all routes"
+    "sandbox": "fresh desktop and 390px browser contexts; inspect every request, local/session storage and cookie across all routes; perform a mocked license check and assert its only external request is the token-only Sociobot verification URL"
   },
   {
     "id": "supported-engines",
@@ -36,10 +36,10 @@
   },
   {
     "id": "browser-demo-reset",
-    "claim": "Opening ?demo=1 starts an isolated sample recording, and Reset demo restarts it without browser storage.",
+    "claim": "Opening ?demo=1 starts an isolated sample recording, and Reset demo restarts it without writing or clearing browser storage.",
     "where": "landing demo action and demo page",
     "test": "npm test -- --test-name-pattern @claim:browser-demo-reset",
-    "sandbox": "fresh browser context; open ?demo=1, record the first displayed terminal line, wait for another line, click Reset demo, and assert the first line returns with empty storage"
+    "sandbox": "fresh browser context plus a context seeded with real-prefixed local/session values; open ?demo=1, wait for the recording, click Reset demo, assert the first line returns, empty storage stays empty, and seeded values remain unchanged"
   },
   {
     "id": "demo-recording",
@@ -120,10 +120,17 @@
   },
   {
     "id": "paid-license",
-    "claim": "The hosted checkout shows a $29 one-time operator license. Terms name Sociobot/Dodo as merchant of record and refund handler. A valid returned or pasted license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
+    "claim": "The hosted checkout shows a $29 one-time operator license and identifies Dodo Payments as merchant of record for order-related inquiries and returns. The terms page links Dodo Payments' buyer terms and refund policy. A valid returned or pasted license is stored locally, verified at most once daily, reveals the operator checklist, and can be removed.",
     "where": "landing paid tier, privacy, terms",
     "test": "npm test -- --test-name-pattern @claim:paid-license",
-    "sandbox": "one live Sociobot checkout request with redirect following disabled plus a fresh browser context with a recorded verification response; assert HTTP 303 to checkout.dodopayments.com, $29 disclosure, terms merchant/refund disclosure, URL token stripping, namespaced storage, daily cache, paid checklist, restore, and removal"
+    "sandbox": "one live Sociobot checkout request with redirect following disabled plus a fresh browser context with a recorded verification response; assert HTTP 303 to checkout.dodopayments.com, $29 one-time disclosure, Dodo Payments merchant/returns wording, linked buyer terms, URL token stripping, namespaced storage, daily cache, paid checklist, restore, and removal"
+  },
+  {
+    "id": "installed-cli",
+    "claim": "The documented install produces an mlr binary that runs outside the source tree.",
+    "where": "landing install section, README",
+    "test": "npm test -- --test-name-pattern @claim:installed-cli",
+    "sandbox": "install the local package into a fresh temporary Cargo root, run the installed mlr binary from a separate directory with Docker and network unavailable, and assert the demo report and runbook"
   },
   {
     "id": "free-cli",

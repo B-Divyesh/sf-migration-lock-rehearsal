@@ -1,4 +1,11 @@
 .install pre{white-space:pre-wrap;overflow:visible}
+.install code{overflow-wrap:anywhere;word-break:break-word}
+
+.legal a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
 
 .terminal pre:focus-visible {
   outline: 4px solid var(--blue);

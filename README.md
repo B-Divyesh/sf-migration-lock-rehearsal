@@ -36,7 +36,7 @@ Then run your migration:
 Docker must be running. Provide a sanitized fixture, the migration SQL, and optionally its rollback SQL:
 
 ```sh
-cargo run -- rehearse \
+mlr rehearse \
   --fixture ./fixture.sql \
   --migration ./2026-flag.sql \
   --rollback ./2026-flag-down.sql \
@@ -83,13 +83,13 @@ The exact static deploy command is `npm run build:site`; it places `index.html` 
 
 ## Privacy
 
-Without a license action, the site makes only same-origin requests and stores no visitor data. The CLI writes reports to your chosen output folder and runs SQL in its new Docker container. See the site’s `/privacy` and `/terms` pages.
+The site has no analytics. Without a license action, it makes only same-origin requests and stores no visitor data. A license check sends only the saved token to `api.sociobot.in`. The CLI writes reports to your chosen output folder and runs SQL in its new Docker container. See the site’s `/privacy` and `/terms` pages.
 
 ## Operator license
 
 The optional operator license costs $29 once. It adds the browser-based operator review checklist. CLI reports and safety checks do not require a license.
 
-Purchase uses Sociobot’s hosted checkout. Sociobot/Dodo is the merchant of record, and refunds are handled there. A returned or pasted token is stored under `sb_license:migration-lock-rehearsal`, sent only to `api.sociobot.in`, and verified at most once daily. Use **Remove saved license** to delete it.
+Purchase uses Sociobot’s hosted checkout. Dodo Payments is the merchant of record and handles order-related inquiries and returns. Read [Dodo Payments’ buyer terms and refund policy](https://dodopayments.com/buyer-terms). A returned or pasted token is stored under `sb_license:migration-lock-rehearsal`, sent only to `api.sociobot.in`, and verified at most once daily. Use **Remove saved license** to delete it.
 
 ## License
 

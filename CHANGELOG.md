@@ -4,7 +4,7 @@
 
 - Bound rollback with the statement deadline and signal recovery, then write NO-GO artifacts before cleanup.
 - Write NO-GO reports for Docker startup, container, setup, copy, and fixture command failures.
-- Reflow the static 404 navigation at 200% text and state the paid license merchant and refund terms.
+- Reflow the static 404 navigation at 200% text and identify the checkout merchant exactly.
 - Make workload, measurement, migration, rollback, and exceeded-limit outcomes write NO-GO and exit non-zero.
 - Add configurable statement, lock-wait, and table-growth limits to reports and runbooks.
 - Serialize JSON safely for every valid filename and write recovery guidance for failed runs.

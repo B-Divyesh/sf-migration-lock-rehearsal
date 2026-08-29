@@ -275,6 +275,24 @@ test('@claim:browser-demo-reset query demo starts isolated and Reset demo restar
       assert.equal((await page.locator('#terminal-output').textContent())?.trim(), '$ mlr demo --dry-run --output ./mlr-demo')
       assert.deepEqual(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length, cookies: document.cookie })), { local: 0, session: 0, cookies: '' })
       await context.close()
+
+      const seededContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
+      const seededPage = await seededContext.newPage()
+      await seededPage.goto(origin + '/')
+      await seededPage.evaluate(() => {
+        localStorage.setItem('real:release-owner', 'Ada')
+        sessionStorage.setItem('real:change-ticket', 'DB-2048')
+      })
+      await seededPage.goto(origin + '/?demo=1', { waitUntil: 'networkidle' })
+      await seededPage.getByRole('button', { name: 'Reset demo' }).click()
+      assert.deepEqual(await seededPage.evaluate(() => ({
+        local: Object.fromEntries(Object.entries(localStorage)),
+        session: Object.fromEntries(Object.entries(sessionStorage)),
+      })), {
+        local: { 'real:release-owner': 'Ada' },
+        session: { 'real:change-ticket': 'DB-2048' },
+      })
+      await seededContext.close()
     } finally { await browser.close() }
   })
 })
@@ -312,13 +330,26 @@ test('product copy uses one name for the JSON decision document', () => {
   assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /go\/no-go report before a migration/)
   assert.doesNotMatch(readFileSync(join(root, 'README.md'), 'utf8'), /dry-run[\s\S]{0,120}measured results/i)
   assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /dry-run[\s\S]{0,120}fixed sample values/i)
+  assert.doesNotMatch(productionCopy, /Sociobot\/Dodo|refunds are handled/i)
+})
+
+test('claims manifest maps every declared claim to exactly one tagged test', () => {
+  const claims = JSON.parse(readFileSync(join(root, '.factory', 'claims.json'), 'utf8'))
+  const source = readFileSync(new URL(import.meta.url), 'utf8')
+  const taggedTests = [...source.matchAll(/test\(['"]@claim:([a-z0-9-]+)/g)].map(match => match[1])
+  assert.equal(new Set(claims.map(claim => claim.id)).size, claims.length, 'claim IDs must be unique')
+  for (const claim of claims) {
+    assert.equal(taggedTests.filter(id => id === claim.id).length, 1, `${claim.id} must have exactly one tagged test`)
+    assert.equal(claim.test, `npm test -- --test-name-pattern @claim:${claim.id}`)
+  }
+  assert.deepEqual(new Set(taggedTests), new Set(claims.map(claim => claim.id)))
 })
 
 test('@claim:site-private static site stays same-origin and stores no visitor data', async () => {
   await withSite(async origin => {
     const browser = await chromium.launch({ headless: true })
     try {
-      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
         const context = await browser.newContext({ viewport })
         const page = await context.newPage()
         const requests = []
@@ -339,15 +370,19 @@ test('@claim:site-private static site stays same-origin and stores no visitor da
         assert.ok(requests.every(url => new URL(url).origin === origin), requests.join('\n'))
         assert.deepEqual(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length, cookies: document.cookie })), { local: 0, session: 0, cookies: '' })
         assert.deepEqual(errors, [])
-        if (viewport.width === 390) {
+        if (viewport.width <= 390) {
           await page.goto(origin + '/')
-          for (const selector of ['.wordmark', 'nav a', 'footer a', '.install a[rel="external"]']) {
-            for (const box of await page.locator(selector).evaluateAll(nodes => nodes.map(node => {
+          for (const path of ['/', '/demo', '/privacy', '/terms']) {
+            await page.goto(origin + path)
+            for (const box of await page.locator('a:not(.skip), button, input, [tabindex="0"]').evaluateAll(nodes => nodes.filter(node => {
+              const style = getComputedStyle(node)
+              return style.display !== 'none' && style.visibility !== 'hidden'
+            }).map(node => {
               const rect = node.getBoundingClientRect()
-              return { width: rect.width, height: rect.height }
+              return { label: node.textContent?.trim() || node.getAttribute('aria-label') || node.tagName, width: rect.width, height: rect.height }
             }))) {
-              assert.ok(box.width >= 44, `${selector} width ${box.width}`)
-              assert.ok(box.height >= 44, `${selector} height ${box.height}`)
+              assert.ok(box.width >= 44, `${path} ${box.label} width ${box.width}`)
+              assert.ok(box.height >= 44, `${path} ${box.label} height ${box.height}`)
             }
           }
         }
@@ -381,6 +416,24 @@ test('@claim:site-private static site stays same-origin and stores no visitor da
       const motion = await page.locator('.cursor').evaluate(node => getComputedStyle(node).animationDuration)
       assert.equal(motion, '0s')
       await context.close()
+
+      const licenseContext = await browser.newContext()
+      const licensePage = await licenseContext.newPage()
+      const licenseRequests = []
+      await licensePage.route('https://api.sociobot.in/**', async route => {
+        licenseRequests.push(route.request().url())
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ valid: true, reason: 'ok', expires_at: null }) })
+      })
+      await licensePage.goto(origin + '/')
+      await licensePage.getByLabel('Have a license? Paste it.').fill('privacy-test-token')
+      await licensePage.getByRole('button', { name: 'Restore license' }).click()
+      await licensePage.getByText('License active.', { exact: true }).waitFor()
+      assert.equal(licenseRequests.length, 1)
+      const verificationUrl = new URL(licenseRequests[0])
+      assert.equal(verificationUrl.origin, 'https://api.sociobot.in')
+      assert.equal(verificationUrl.pathname, '/api/v1/products/migration-lock-rehearsal/verify')
+      assert.deepEqual([...verificationUrl.searchParams], [['license', 'privacy-test-token']])
+      await licenseContext.close()
     } finally { await browser.close() }
   })
 
@@ -404,6 +457,7 @@ test('route metadata, section links, and ARIA remain valid at desktop and mobile
       assert.match(html, new RegExp(`<title>${title}</title>`))
       assert.match(html, new RegExp(`rel="canonical" href="${canonical.replaceAll('/', '\\/')}"`))
       assert.match(html, new RegExp(`property="og:url" content="${canonical.replaceAll('/', '\\/')}"`))
+      assert.match(html, /name="twitter:image" content="https:\/\/migration-lock-rehearsal\.sociobot\.in\/og-lock\.webp"/)
     }
     const policy = JSON.parse(readFileSync(join(root, 'public', 'staticwebapp.config.json'), 'utf8'))
     for (const path of ['/demo', '/privacy', '/terms']) {
@@ -413,6 +467,8 @@ test('route metadata, section links, and ARIA remain valid at desktop and mobile
     assert.match(notFound, /rel="canonical" href="https:\/\/migration-lock-rehearsal\.sociobot\.in\/404"/)
     assert.match(notFound, /property="og:url" content="https:\/\/migration-lock-rehearsal\.sociobot\.in\/404"/)
     assert.match(notFound, /rel="apple-touch-icon" href="\/apple-touch-icon\.png"/)
+    assert.match(notFound, /name="twitter:image" content="https:\/\/migration-lock-rehearsal\.sociobot\.in\/og-lock\.webp"/)
+    assert.match(notFound, /aria-label="Migration Lock Rehearsal home"/)
     assert.equal(policy.responseOverrides['404'].rewrite, '/404.html')
 
     const browser = await chromium.launch({ headless: true })
@@ -430,6 +486,18 @@ test('route metadata, section links, and ARIA remain valid at desktop and mobile
         const axe = await new AxeBuilder({ page }).analyze()
         assert.ok(!axe.violations.some(item => item.id === 'aria-allowed-role'), JSON.stringify(axe.violations))
         assert.equal(await page.locator('aside[role="status"]').count(), 0)
+
+        await page.goto(origin + '/')
+        await page.getByRole('link', { name: 'Privacy', exact: true }).first().click()
+        await page.waitForFunction(() => document.activeElement?.tagName === 'H1')
+        assert.equal(await page.title(), routes['/privacy'][0])
+        await page.goBack()
+        await page.waitForFunction(() => document.activeElement?.tagName === 'H1')
+        assert.equal(await page.title(), routes['/'][0])
+
+        await page.goto(origin + '/terms')
+        const legalLink = page.getByRole('link', { name: /Dodo Payments’ buyer terms/ })
+        assert.equal(await legalLink.getAttribute('href'), 'https://dodopayments.com/buyer-terms')
         await context.close()
       }
     } finally { await browser.close() }
@@ -462,7 +530,7 @@ test('390px navigation reflows at 200% text and first-screen facts name local, o
       await page.goto(origin + '/')
       assert.deepEqual(await page.locator('.facts li').allTextContents(), [
         'Local dry-run works offline',
-        'No tracking before a license action',
+        'No analytics; license checks contact Sociobot',
         '$29 once; browser checklist',
       ])
       await context.close()
@@ -481,6 +549,13 @@ test('@claim:paid-license live checkout redirects and returned or restored licen
   const checkoutHtml = await (await fetch(checkoutLocation, { signal: AbortSignal.timeout(15_000) })).text()
   assert.match(checkoutHtml, /\$29\.00/)
   assert.match(checkoutHtml, /One-time unlock for Migration Lock Rehearsal/)
+  assert.match(checkoutHtml, /This order process is conducted by our online reseller &amp; Merchant of Record, dodopayments\.com, who also handles order-related inquiries and returns\./)
+  assert.match(checkoutHtml, /alt="Dodo Payments"/)
+  const buyerTermsResponse = await fetch('https://dodopayments.com/buyer-terms', { signal: AbortSignal.timeout(15_000) })
+  assert.equal(buyerTermsResponse.status, 200)
+  const buyerTermsHtml = await buyerTermsResponse.text()
+  assert.match(buyerTermsHtml, /Payment, Taxes and Refunds/)
+  assert.match(buyerTermsHtml, /Refunds are provided at the sole discretion of Dodo Payments/)
 
   await withSite(async origin => {
     const browser = await chromium.launch({ headless: true })
@@ -512,11 +587,49 @@ test('@claim:paid-license live checkout redirects and returned or restored licen
       assert.equal(verifyRequests, 2)
       assert.equal(await page.evaluate(() => localStorage.getItem('sb_license:migration-lock-rehearsal')), 'restored-token')
       await page.goto(origin + '/terms')
-      await page.getByText(/Sociobot\/Dodo is the merchant of record/).waitFor()
-      await page.getByText(/Refunds are handled by Sociobot\/Dodo through the hosted checkout/).waitFor()
+      await page.getByText(/Dodo Payments is the merchant of record and handles order-related inquiries and returns/).waitFor()
+      const buyerTerms = page.getByRole('link', { name: /Dodo Payments’ buyer terms and refund policy/ })
+      assert.equal(await buyerTerms.getAttribute('href'), 'https://dodopayments.com/buyer-terms')
       await context.close()
     } finally { await browser.close() }
   })
+})
+
+test('@claim:installed-cli packaged installation runs mlr outside the source tree', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const installSection = readme.match(/## Install and use your migration([\s\S]*?)## Commands/)?.[1] ?? ''
+  assert.match(installSection, /cargo install --git https:\/\/github\.com\/B-Divyesh\/sf-migration-lock-rehearsal --locked/)
+  assert.match(installSection, /Then run your migration:[\s\S]*?```sh\s+mlr rehearse/)
+  assert.doesNotMatch(installSection, /cargo run -- rehearse/)
+
+  const sandbox = mkdtempSync(join(tmpdir(), 'mlr-install-'))
+  const installRoot = join(sandbox, 'installed')
+  const work = join(sandbox, 'outside-source-tree')
+  execFileSync('mkdir', ['-p', work])
+  try {
+    execFileSync('cargo', ['install', '--path', root, '--locked', '--root', installRoot, '--force'], {
+      cwd: work,
+      stdio: 'pipe',
+      env: { ...process.env, CARGO_TARGET_DIR: join(sandbox, 'target') },
+    })
+    const installedCli = join(installRoot, 'bin', 'mlr')
+    const output = join(work, 'installed-demo')
+    const result = spawnSync(installedCli, ['demo', '--dry-run', '--output', output], {
+      cwd: work,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: join(sandbox, 'no-docker-or-network-tools'),
+        HTTP_PROXY: 'http://127.0.0.1:1',
+        HTTPS_PROXY: 'http://127.0.0.1:1',
+        ALL_PROXY: 'http://127.0.0.1:1',
+        NO_PROXY: '',
+      },
+    })
+    assertSuccess(result)
+    assert.equal(JSON.parse(readFileSync(join(output, 'report.json'), 'utf8')).verdict, 'GO')
+    assert.match(readFileSync(join(output, 'runbook.md'), 'utf8'), /Verdict: GO/)
+  } finally { rmSync(sandbox, { recursive: true, force: true }) }
 })
 
 test('@claim:supported-engines dry-run cards accept only Postgres and ClickHouse', () => {

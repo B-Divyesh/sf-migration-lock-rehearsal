@@ -1,6 +1,6 @@
 # Demo sandbox
 
-Open `/?demo=1` or `/demo`, or run `mlr demo --output ./mlr-demo`. The site demo uses no storage and makes only same-origin requests. Reset restarts the self-hosted terminal recording and restores the first line of its bundled sample. The CLI demo copies only the bundled, invented fixture and writes its report below the output directory.
+Open `/?demo=1` or `/demo`, or run `mlr demo --output ./mlr-demo`. The site demo uses no storage and makes only same-origin requests. It does not change or clear existing browser storage. Reset restarts the self-hosted terminal recording and restores the first line of its bundled sample. The CLI demo copies only the bundled, invented fixture and writes its report below the output directory.
 
 The browser recording reads `public/demo-recording.json`. It is a checked-in transcript of `mlr demo --dry-run --output ./mlr-demo` from the bundled release binary. Demo mode has no storage namespace because it does not write browser data.
 
