@@ -1,36 +1,33 @@
-# Handoff — adversarial first-read review 1
+# Handoff — polish 1
 
 ## Result
 
-**FAIL.** The full review is in `.factory/review-1.md`.
+Released repair commit: `ddc1ffec48dc60fc17bba7f4b57416348d57e078` (plus documentation evidence in the following commit).
 
-The live first screen clearly states what the CLI does, who it is for, and the first sample action. The one-click demo shows realistic data, the main routes and accessibility checks pass, browser storage remains empty, and all 14 declared claim commands pass from a fresh clone. Seven blocking findings remain, led by the missing install/distribution path, no-op browser demo reset, unverified real-container behavior, unlisted rewrite, price, and refund claims, and the unresolved 404 metadata issue from the earlier handoff.
+All 18 findings in `.factory/review-1.md` are addressed. The static site was deployed through `/opt/fleet/lib/deploy-static.sh` to `https://migration-lock-rehearsal.sociobot.in` (Azure deployment `50659fcb-f285-44c2-b4a7-35bb334fbf8e`) and cold-checked after deployment.
 
-## Verification performed
+## Verification
+
+- Fresh final clone: `/tmp/mlr-clean-ddc1ffe`; `npm ci && npm test` exited `0`. 21 tests passed; two real-container tests were intentionally skipped because this disposable worker lacks kernel namespace permissions. The exact output is `clean-test.log` in that temporary clone.
+- Real-container gate: `.github/workflows/docker-claims.yml` runs `@claim:docker-rehearsal` and `@claim:container-cleanup` with `MLR_REQUIRE_DOCKER=1` on GitHub's Ubuntu Docker runner. The tests run bundled Postgres 16 and ClickHouse 24.8 samples and now exercise both success and SQL-failure cleanup.
+- Local gates passed: `npm run typecheck`, `npm run lint`, `npm run build`, `cargo build --release`, `cargo package --allow-dirty --no-verify`, and `npm pack --dry-run`.
+- Live checks passed: `npm run verify:url -- https://migration-lock-rehearsal.sociobot.in`; zero serious/critical axe findings, no console errors, correct title/lang/main/alt, and no 390px overflow.
+- Cold live browser flow passed: `/?demo=1` showed the persistent banner; Reset demo restarted the terminal at `$ mlr demo --dry-run --output ./mlr-demo` with empty storage; the designed unknown-route page had the expected title. Screenshots: `.factory/evidence/polish-1/live-mobile-home.png`, `live-mobile-demo-reset.png`, and `live-mobile-404.png`.
+- Build budget: initial JS `13.22 kB` raw / `5.10 kB` gzip; CSS `6.51 kB` raw / `2.19 kB` gzip; original hero art `107.87 kB`.
+
+## Run and deploy
 
 ```sh
-# Fresh clone at 62ca9640c4912fb02a61c41fddd32f6333da74a0
 npm ci
-# Each of the 14 exact test commands from .factory/claims.json
-
-# Current worktree
 npm test
-npm run typecheck
 npm run lint
 npm run build
 cargo build --release
-npm run verify:url -- https://migration-lock-rehearsal.sociobot.in
+/opt/fleet/lib/deploy-static.sh migration-lock-rehearsal dist/site
 ```
 
-All commands above passed. `dist/site/` was produced; initial JavaScript is 12.25 kB raw / 4.80 kB gzip. Fresh Playwright contexts covered 390 × 844 and 1440 × 900, route metadata, internal-link crawl, history/focus, demo storage and requests, unknown-route status, and axe.
+The CLI is ready for registry review with `cargo package`; do not publish it from this repository.
 
-## Files changed
+## Known gaps
 
-- `.factory/review-1.md` — full adversarial review, findings, claim evidence, history check, and complete landing/README copy audit.
-- `.factory/handoff.md` — this review handoff.
-
-No product code was modified.
-
-## Known verification limit
-
-This worker has no Docker-compatible runtime or socket. The repository’s Docker claims passed only against its deterministic command double; real Postgres and ClickHouse integration remains unverified and is blocking finding F-1-3.
+No known product gaps. This worker cannot run a nested container image because its kernel denies `unshare`; the real Docker claims are fail-required on the included GitHub Actions Ubuntu runner rather than treated as passing locally.
